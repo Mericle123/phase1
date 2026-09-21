@@ -1,4 +1,4 @@
-# C Invoice Management System
+# Invoice Management System
 
 A role-based invoice, payment verification, audit, employee activity, and blockchain record management application.
 
