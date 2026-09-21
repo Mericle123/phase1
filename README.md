@@ -1,6 +1,6 @@
-# CountTale Blockchain Invoice Management System
+# C Invoice Management System
 
-CountTale is a role-based invoice, payment verification, audit, employee activity, and blockchain record management application.
+A role-based invoice, payment verification, audit, employee activity, and blockchain record management application.
 
 The app has two parts:
 
