@@ -1,0 +1,16 @@
+{
+  "name": "counttale-paid-invoice-chaincode",
+  "version": "1.0.0",
+  "description": "Hyperledger Fabric chaincode for verified paid invoice summaries",
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "start": "fabric-chaincode-node start",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "fabric-contract-api": "^2.5.8",
+    "fabric-shim": "^2.5.8"
+  },
+  "devDependencies": {}
+}
