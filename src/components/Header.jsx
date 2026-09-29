@@ -1,21 +1,41 @@
 import { useState, useEffect } from "react";
 import { createPortal } from "react-dom";
-import { FileText, Menu, X, Monitor, User as UserIcon, LogOut } from "lucide-react";
+import { CalendarClock, FilePlus2, FileText, LogOut, Menu, Monitor, Play, Trash2, User as UserIcon, X } from "lucide-react";
 import { toast } from "sonner";
 import { NotificationCenter } from "./NotificationCenter";
 import { BrandRail } from "./BrandRail";
 import NZBritanniaMark from "../assets/nz-britannia-mark.png";
 import NZBritanniaMarkWhite from "../assets/nz-britannia-mark-white.png";
 
-export function Header({ view = "directory", viewTitle = "Comprehensive Client Record", setView, toggleSidebar, isSidebarOpen = false, isSettingsOpen, setIsSettingsOpen, user, onLogout }) {
-  const [isProfileOpen, setIsProfileOpen] = useState(false);
-  const [draftCount, setDraftCount] = useState(() => {
-    try {
-      return JSON.parse(localStorage.getItem("counttale_invoice_drafts") || "[]").length;
-    } catch {
-      return 0;
-    }
+const draftStorageKey = "counttale_invoice_drafts";
+
+const readDrafts = () => {
+  try {
+    const savedDrafts = JSON.parse(localStorage.getItem(draftStorageKey) || "[]");
+    return Array.isArray(savedDrafts)
+      ? savedDrafts.sort((a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0))
+      : [];
+  } catch {
+    return [];
+  }
+};
+
+const formatDraftTime = (value) => {
+  if (!value) return "Saved recently";
+  return new Date(value).toLocaleString([], {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
   });
+};
+
+export function Header({ view = "directory", viewTitle = "Comprehensive Client Record", setView, toggleSidebar, isSidebarOpen = false, isSettingsOpen, setIsSettingsOpen, user, onLogout, onOpenDraft, onCreateInvoice }) {
+  const [isProfileOpen, setIsProfileOpen] = useState(false);
+  const [isDraftsOpen, setIsDraftsOpen] = useState(false);
+  const [drafts, setDrafts] = useState(readDrafts);
+  const [confirmDeleteId, setConfirmDeleteId] = useState("");
+  const draftCount = drafts.length;
 
   useEffect(() => {
     document.documentElement.classList.remove("dark");
@@ -33,21 +53,33 @@ export function Header({ view = "directory", viewTitle = "Comprehensive Client R
   }, [isProfileOpen]);
 
   useEffect(() => {
-    const syncDraftCount = () => {
-      try {
-        setDraftCount(JSON.parse(localStorage.getItem("counttale_invoice_drafts") || "[]").length);
-      } catch {
-        setDraftCount(0);
-      }
-    };
-    syncDraftCount();
-    window.addEventListener("storage", syncDraftCount);
-    window.addEventListener("counttale:drafts-updated", syncDraftCount);
+    const syncDrafts = () => setDrafts(readDrafts());
+    syncDrafts();
+    window.addEventListener("storage", syncDrafts);
+    window.addEventListener("counttale:drafts-updated", syncDrafts);
     return () => {
-      window.removeEventListener("storage", syncDraftCount);
-      window.removeEventListener("counttale:drafts-updated", syncDraftCount);
+      window.removeEventListener("storage", syncDrafts);
+      window.removeEventListener("counttale:drafts-updated", syncDrafts);
     };
   }, []);
+
+  useEffect(() => {
+    if (!isDraftsOpen) return undefined;
+    const closeOnEscape = (event) => {
+      if (event.key === "Escape") setIsDraftsOpen(false);
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [isDraftsOpen]);
+
+  const removeDraft = (draftId) => {
+    const nextDrafts = drafts.filter((draft) => draft.id !== draftId);
+    localStorage.setItem(draftStorageKey, JSON.stringify(nextDrafts));
+    setDrafts(nextDrafts);
+    setConfirmDeleteId("");
+    window.dispatchEvent(new CustomEvent("counttale:drafts-updated"));
+    toast.success("Draft removed");
+  };
 
   const settingsDrawer = isSettingsOpen ? createPortal(
     <>
@@ -173,6 +205,122 @@ export function Header({ view = "directory", viewTitle = "Comprehensive Client R
     document.body
   ) : null;
 
+  const draftsDrawer = isDraftsOpen ? createPortal(
+    <>
+      <div
+        className="fixed inset-0 glass-backdrop z-[240]"
+        onClick={() => setIsDraftsOpen(false)}
+        aria-hidden="true"
+      />
+      <aside
+        className="fixed inset-y-0 right-0 z-[250] flex w-[min(30rem,100vw)] flex-col border-l border-[var(--ct-line)] bg-white motion-drawer"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="saved-drafts-title"
+      >
+        <div className="border-b border-[var(--ct-line)] bg-[var(--ct-green-50)] px-5 py-5 sm:px-6">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <p className="text-[10px] font-bold uppercase tracking-widest text-[var(--ct-green-700)]">Invoice workspace</p>
+              <h2 id="saved-drafts-title" className="mt-1 text-xl font-black text-slate-900">Saved drafts</h2>
+              <p className="mt-1 text-xs font-medium text-slate-500">Choose a draft to continue without replacing your other saved work.</p>
+            </div>
+            <button type="button" onClick={() => setIsDraftsOpen(false)} className="ui-icon-btn" aria-label="Close saved drafts">
+              <X size={18} />
+            </button>
+          </div>
+        </div>
+
+        <div className="flex-1 overflow-y-auto px-4 py-4 custom-scrollbar sm:px-6">
+          {drafts.length ? (
+            <div className="space-y-3">
+              {drafts.map((draft) => {
+                const data = draft.formData || {};
+                const isConfirmingDelete = confirmDeleteId === draft.id;
+                return (
+                  <article key={draft.id} className="rounded-xl border border-[var(--ct-line)] bg-white p-4 transition-colors hover:border-[var(--ct-green-200)]">
+                    <div className="flex items-start gap-3">
+                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-[var(--ct-green-50)] text-[var(--ct-green-700)]">
+                        <FileText size={18} />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm font-black text-slate-900">{draft.title || "Untitled invoice draft"}</p>
+                        <p className="mt-1 truncate text-xs font-medium text-slate-500">
+                          {data.journalNo ? `Journal ${data.journalNo}` : "Journal number not entered"}
+                        </p>
+                      </div>
+                      <span className="ui-status-badge border-amber-100 bg-amber-50 text-amber-700">
+                        {data.paymentStatus || "Unpaid"}
+                      </span>
+                    </div>
+
+                    <div className="mt-4 flex items-center gap-2 text-[11px] font-semibold text-slate-500">
+                      <CalendarClock size={14} />
+                      <span>{formatDraftTime(draft.updatedAt)}</span>
+                      {draft.autosaved && <span className="ml-auto text-[var(--ct-green-700)]">Autosaved</span>}
+                    </div>
+
+                    <div className="mt-4 flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          onOpenDraft?.(draft);
+                          setIsDraftsOpen(false);
+                          setConfirmDeleteId("");
+                          toast.success("Draft opened", {
+                            description: draft.title || "Your saved invoice is ready to continue.",
+                          });
+                        }}
+                        className="ui-btn ui-btn-sm ui-btn-primary flex-1 justify-center"
+                      >
+                        <Play size={14} />
+                        Resume draft
+                      </button>
+                      {isConfirmingDelete ? (
+                        <>
+                          <button type="button" onClick={() => removeDraft(draft.id)} className="ui-btn ui-btn-sm ui-btn-danger">Delete</button>
+                          <button type="button" onClick={() => setConfirmDeleteId("")} className="ui-btn ui-btn-sm ui-btn-secondary">Cancel</button>
+                        </>
+                      ) : (
+                        <button type="button" onClick={() => setConfirmDeleteId(draft.id)} className="ui-icon-btn text-rose-600" aria-label={`Delete ${draft.title || "draft"}`}>
+                          <Trash2 size={16} />
+                        </button>
+                      )}
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="flex min-h-72 flex-col items-center justify-center px-6 text-center">
+              <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-[var(--ct-green-50)] text-[var(--ct-green-700)]">
+                <FileText size={22} />
+              </div>
+              <h3 className="mt-4 text-base font-black text-slate-900">No saved drafts</h3>
+              <p className="mt-2 max-w-xs text-sm leading-6 text-slate-500">Incomplete invoices will appear here after you save them or leave the form.</p>
+            </div>
+          )}
+        </div>
+
+        <div className="border-t border-[var(--ct-line)] bg-slate-50 px-4 py-4 sm:px-6">
+          <button
+            type="button"
+            onClick={() => {
+              onCreateInvoice?.();
+              setIsDraftsOpen(false);
+              setConfirmDeleteId("");
+            }}
+            className="ui-btn ui-btn-md ui-btn-secondary w-full justify-center"
+          >
+            <FilePlus2 size={17} />
+            Start new invoice
+          </button>
+        </div>
+      </aside>
+    </>,
+    document.body,
+  ) : null;
+
   return (
     <>
     <header className="ct-topbar h-16 flex items-center justify-between px-4 md:px-8 shrink-0 relative z-30 w-full">
@@ -198,10 +346,7 @@ export function Header({ view = "directory", viewTitle = "Comprehensive Client R
         <div className="flex items-center gap-3 text-slate-500 sm:border-r sm:border-[var(--ct-line)] sm:pr-6">
           <button
             type="button"
-            onClick={() => {
-              setView("entry");
-              toast.info(draftCount ? `${draftCount} saved draft${draftCount === 1 ? "" : "s"} available` : "No saved drafts yet");
-            }}
+            onClick={() => setIsDraftsOpen(true)}
             className="ui-icon-btn relative"
             title="Saved drafts"
             aria-label={`Saved drafts${draftCount ? `, ${draftCount} available` : ""}`}
@@ -251,6 +396,7 @@ export function Header({ view = "directory", viewTitle = "Comprehensive Client R
     </header>
     {settingsDrawer}
     {profileDrawer}
+    {draftsDrawer}
     </>
   );
 }

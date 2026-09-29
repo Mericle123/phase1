@@ -26,6 +26,7 @@ import { TaskLoader } from "./TaskLoader";
 
 const roles = [
   { value: "employee", label: "Employee" },
+  { value: "verifier", label: "Verifier" },
   { value: "admin", label: "Admin" },
 ];
 
@@ -59,6 +60,7 @@ const isAdminLevel = (user) => ["admin", "super_admin"].includes(user?.role);
 
 const roleDescriptions = {
   employee: "Can enter invoice and client records.",
+  verifier: "Can review journals, verify payments, and message employees.",
   admin: "Can manage staff and review records.",
   super_admin: "Owner-level admin assignment access.",
 };

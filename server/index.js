@@ -260,7 +260,7 @@ app.get("/api/invoices/:id", requireAuth, (req, res) => {
 app.patch(
   "/api/invoices/:id",
   requireAuth,
-  requireRoles("employee", "admin"),
+  requireRoles("employee", "verifier", "admin", "super_admin"),
   asyncRoute(async (req, res) => {
     const invoice = await updateInvoice(req.params.id, req.body, req.user, requestContext(req));
     if (!invoice) return res.status(404).json({ error: "Invoice not found." });
@@ -271,7 +271,7 @@ app.patch(
 app.patch(
   "/api/invoices/:id/status",
   requireAuth,
-  requireRoles("admin"),
+  requireRoles("verifier", "admin", "super_admin"),
   asyncRoute(async (req, res) => {
     let invoice = await updatePaymentStatus(req.params.id, req.body, req.user, requestContext(req));
     if (!invoice) return res.status(404).json({ error: "Invoice not found." });
@@ -288,7 +288,7 @@ app.patch(
 app.post(
   "/api/invoices/:id/commit",
   requireAuth,
-  requireRoles("admin"),
+  requireRoles("verifier", "admin", "super_admin"),
   asyncRoute(async (req, res) => {
     const invoice = getInvoiceById(req.params.id, req.user);
     if (!invoice) return res.status(404).json({ error: "Invoice not found." });
@@ -304,7 +304,7 @@ app.post(
 app.post(
   "/api/invoices/:id/corrections",
   requireAuth,
-  requireRoles("admin"),
+  requireRoles("verifier", "admin", "super_admin"),
   asyncRoute(async (req, res) => {
     const correction = await createCorrection(req.params.id, req.body, req.user, requestContext(req));
     if (!correction) return res.status(404).json({ error: "Invoice not found." });
@@ -315,7 +315,7 @@ app.post(
 app.get(
   "/api/blockchain/:journalNo",
   requireAuth,
-  requireRoles("admin"),
+  requireRoles("verifier", "admin", "super_admin"),
   (req, res) => {
     const result = queryPaidInvoice(req.params.journalNo);
     if (!result) return res.status(404).json({ error: "No paid invoice ledger record found." });

@@ -1,5 +1,6 @@
 import { useEffect, useState, useMemo } from "react";
-import { AlertTriangle, ChevronLeft, ChevronRight, Eye, Download, BarChart2, X, Search, ShieldCheck, SlidersHorizontal, Edit3, Save, MessageSquare, Send } from "lucide-react";
+import { createPortal } from "react-dom";
+import { AlertTriangle, ArrowRight, CheckCircle2, ChevronLeft, ChevronRight, CircleDollarSign, CircleOff, Eye, Download, BarChart2, PieChart, ReceiptText, X, Search, ShieldCheck, SlidersHorizontal, Edit3, Save, MessageSquare, Send } from "lucide-react";
 import { cn } from "../lib/utils";
 import { toast } from "sonner";
 import { downloadFormattedExcel, objectsToRows } from "../lib/exportCsv";
@@ -10,7 +11,7 @@ import BOBLogo from "../assets/BOB.png";
 import BDBLLogo from "../assets/BDBL.png";
 import BNBLogo from "../assets/BNB.png";
 import TBankLogo from "../assets/T-Bank.jpg";
-import DigitalKiduLogo from "../assets/DIgital kidu.png";
+import DigitalKiduLogo from "../assets/Digital-Kidu.png";
 
 const paymentBadgeClass = {
   Paid: "bg-emerald-50 text-emerald-700 border-emerald-100",
@@ -37,7 +38,7 @@ const getEnteredByName = (record) =>
 const getEnteredByRole = (record) =>
   record.enteredByRole || record.submittedByRole || record.employeeRole || record.submittedBy?.roleLabel || "Employee";
 
-const canSeeEntryOwner = (user) => ["admin", "super_admin"].includes(user?.role);
+const canSeeEntryOwner = (user) => ["verifier", "admin", "super_admin"].includes(user?.role);
 
 export function ClientTable({ clients, setClients, onViewDetails, onViewReport, externalSearchQuery = "", onVerifyPayment, onUpdateInvoice, user }) {
   const [filter, setFilter] = useState("All"); // Category filter
@@ -56,6 +57,7 @@ export function ClientTable({ clients, setClients, onViewDetails, onViewReport, 
   const [paymentForm, setPaymentForm] = useState({
     paymentSender: "",
     paymentMethod: "Bank Transfer",
+    bank: "",
     paymentReference: "",
     amountReceived: "",
     paymentDate: new Date().toISOString().slice(0, 10),
@@ -74,9 +76,9 @@ export function ClientTable({ clients, setClients, onViewDetails, onViewReport, 
   const showEntryOwner = canSeeEntryOwner(user);
   const canEditRecord = (client) =>
     Boolean(onUpdateInvoice) &&
-    (["admin", "super_admin"].includes(user?.role) || client.enteredBy === user?.id);
+    (["verifier", "admin", "super_admin"].includes(user?.role) || client.enteredBy === user?.id);
   const canMessageEntryOwner = (client) =>
-    ["admin", "super_admin"].includes(user?.role) && client.enteredBy && client.enteredBy !== user?.id;
+    ["verifier", "admin", "super_admin"].includes(user?.role) && client.enteredBy && client.enteredBy !== user?.id;
 
   const numericAmount = numericCurrencyAmount;
   const formatMoney = (record, value) => formatCurrencyAmount(value, currencyCodeForRecord(record));
@@ -143,6 +145,22 @@ export function ClientTable({ clients, setClients, onViewDetails, onViewReport, 
   const itemsPerPage = 20;
   const totalPages = Math.max(1, Math.ceil(filteredClients.length / itemsPerPage));
   const currentClients = filteredClients.slice((page - 1) * itemsPerPage, page * itemsPerPage);
+  const activePaymentClient = confirmAction ? clients.find((client) => client.id === confirmAction.clientId) : null;
+  const activePaymentBalance = getBalanceDue(activePaymentClient);
+  const activePaymentTotal = numericAmount(activePaymentClient?.invoiceAmount ?? activePaymentClient?.amount);
+  const activePaymentReceived = numericAmount(activePaymentClient?.amountReceived);
+  const activePaymentEntryAmount = numericAmount(paymentForm.amountReceived);
+  const projectedPaymentReceived = Math.min(activePaymentTotal, activePaymentReceived + activePaymentEntryAmount);
+  const projectedPaymentBalance = Math.max(0, activePaymentTotal - projectedPaymentReceived);
+  const activePaymentProgress = activePaymentTotal > 0
+    ? Math.min(100, Math.round((activePaymentReceived / activePaymentTotal) * 100))
+    : 0;
+  const projectedPaymentProgress = activePaymentTotal > 0
+    ? Math.min(100, Math.round((projectedPaymentReceived / activePaymentTotal) * 100))
+    : 0;
+  const projectedPaymentStatus = activePaymentClient
+    ? automaticStatusFor(activePaymentClient, paymentTotalAfterEntry(activePaymentClient, paymentForm.amountReceived))
+    : "Unpaid";
 
   const handleExport = () => {
     try {
@@ -155,7 +173,8 @@ export function ClientTable({ clients, setClients, onViewDetails, onViewReport, 
         "Contract Amount": formatMoney(c, c.invoiceAmount ?? c.amount),
         "Payment Status": c.paymentStatus,
         ...(showEntryOwner ? { "Entered By": getEnteredByName(c), "Entered Role": getEnteredByRole(c) } : {}),
-        "Journal Number": c.journalNo || "---",
+        "Invoice Journal": c.journalNo || "---",
+        "Payment Journals": (c.paymentHistory || []).map((entry) => entry.journalNo).filter(Boolean).join(", ") || "---",
         "Bank": c.bank || "---",
         "Audit Status": c.auditStatus?.finalized ? "Verified" : "Pending"
       }));
@@ -179,7 +198,7 @@ export function ClientTable({ clients, setClients, onViewDetails, onViewReport, 
   const openPaymentEditor = (clientId, newStatus, isBlockchainRevision = false) => {
     const targetClient = clients.find(c => c.id === clientId);
     setConfirmAction({ clientId, newStatus, isBlockchainRevision });
-    setJournalInput(targetClient?.journalNo || "");
+    setJournalInput("");
     const invoiceAmount = numericAmount(targetClient?.invoiceAmount ?? targetClient?.amount);
     const currentAmount = numericAmount(targetClient?.amountReceived);
     const balance = Math.max(0, invoiceAmount - currentAmount);
@@ -191,20 +210,32 @@ export function ClientTable({ clients, setClients, onViewDetails, onViewReport, 
           : 0;
     setPaymentForm({
       paymentSender: targetClient?.paymentSender || "",
-      paymentMethod: targetClient?.paymentMethod || "Bank Transfer",
-      paymentReference: targetClient?.paymentReference || "",
+      paymentMethod: /transfer/i.test(targetClient?.paymentMethod || "") ? "Bank Transfer" : targetClient?.paymentMethod || "Bank Transfer",
+      bank: targetClient?.bank || "",
+      paymentReference: "",
       amountReceived: suggestedAmount || "",
-      paymentDate: targetClient?.paymentDate || new Date().toISOString().slice(0, 10),
+      paymentDate: new Date().toISOString().slice(0, 10),
       verificationRemarks: targetClient?.verificationRemarks || "",
     });
   };
 
   const handlePaymentAction = (clientId, newStatus) => {
     if (!onVerifyPayment) {
-      toast.error("Access Restricted", { description: "Only administrators can update payment status." });
+      toast.error("Access Restricted", { description: "Only Verifiers and administrators can update payment status." });
       return;
     }
     const targetClient = clients.find(c => c.id === clientId);
+    if (!targetClient) return;
+    if (newStatus !== "Unpaid" && getBalanceDue(targetClient) <= 0) {
+      toast.info("Payment already complete", { description: "Open Status or Details to review the payment journal history." });
+      return;
+    }
+    if (newStatus === "Unpaid" && numericAmount(targetClient.amountReceived) > 0) {
+      toast.error("Recorded payments cannot be erased", {
+        description: "This invoice has payment journal entries. Add the remaining payment or submit a correction instead.",
+      });
+      return;
+    }
     if (targetClient?.paymentStatus === newStatus && newStatus !== "Partially Paid") {
       toast.info(`Already ${newStatus}`, { description: "This record is already using the selected payment status." });
       return;
@@ -291,10 +322,23 @@ export function ClientTable({ clients, setClients, onViewDetails, onViewReport, 
           toast.error("Payment Amount Required", { description: "Enter the amount received for this payment entry." });
           return;
         }
+        if (numericAmount(paymentForm.amountReceived) > getBalanceDue(targetClient)) {
+          toast.error("Payment Exceeds Balance", {
+            description: `The largest payment allowed is ${formatMoney(targetClient, getBalanceDue(targetClient))}.`,
+          });
+          return;
+        }
+        if (paymentForm.paymentMethod === "Bank Transfer" && !paymentForm.bank.trim()) {
+          toast.error("Financial Institution Required", {
+            description: "Select the bank that handled this transfer.",
+          });
+          return;
+        }
 
-        const journalExists = clients.some(c => 
-          c.id !== confirmAction.clientId && 
-          c.journalNo && c.journalNo.trim().toLowerCase() === journalInput.trim().toLowerCase()
+        const normalizedJournal = journalInput.trim().toLowerCase();
+        const journalExists = clients.some(c =>
+          String(c.journalNo || "").trim().toLowerCase() === normalizedJournal ||
+          (c.paymentHistory || []).some(entry => String(entry.journalNo || "").trim().toLowerCase() === normalizedJournal)
         );
 
         if (journalExists) {
@@ -310,15 +354,16 @@ export function ClientTable({ clients, setClients, onViewDetails, onViewReport, 
         if (onVerifyPayment) {
           updatedInvoice = await onVerifyPayment(confirmAction.clientId, {
             paymentStatus: confirmAction.newStatus,
-            journalNo: journalInput,
             bank: targetClient?.bank || "",
             ...paymentForm,
             recordPartPayment: confirmAction.newStatus !== "Unpaid",
             paymentEntry: confirmAction.newStatus !== "Unpaid"
               ? {
+                  journalNo: journalInput,
                   amount: paymentForm.amountReceived,
                   sender: paymentForm.paymentSender,
                   method: paymentForm.paymentMethod,
+                  bank: paymentForm.paymentMethod === "Bank Transfer" ? paymentForm.bank : "",
                   reference: paymentForm.paymentReference,
                   date: paymentForm.paymentDate,
                   remarks: paymentForm.verificationRemarks,
@@ -337,7 +382,9 @@ export function ClientTable({ clients, setClients, onViewDetails, onViewReport, 
               ? { 
                   ...c, 
                   paymentStatus: confirmAction.newStatus, 
-                  journalNo: confirmAction.newStatus === "Paid" ? journalInput : c.journalNo,
+                  paymentHistory: confirmAction.newStatus === "Unpaid"
+                    ? c.paymentHistory || []
+                    : [...(c.paymentHistory || []), { journalNo: journalInput, amount: paymentForm.amountReceived }],
                   bank: c.bank || ""
                 }
               : c
@@ -351,7 +398,9 @@ export function ClientTable({ clients, setClients, onViewDetails, onViewReport, 
         } else {
           const finalStatus = updatedInvoice?.paymentStatus || automaticStatusFor(targetClient, paymentTotalAfterEntry(targetClient, paymentForm.amountReceived));
           toast.success(`Invoice marked as ${finalStatus}`, {
-            description: finalStatus === "Paid" ? "Fabric transaction reference has been recorded." : "Audit log updated.",
+            description: confirmAction.newStatus === "Unpaid"
+              ? "No payment has been recorded."
+              : `Payment journal ${journalInput} was added without changing invoice journal ${targetClient?.journalNo}.`,
           });
         }
         setConfirmAction(null);
@@ -481,8 +530,7 @@ export function ClientTable({ clients, setClients, onViewDetails, onViewReport, 
                   )}
 
                   <td className="font-bold text-slate-900 whitespace-nowrap">
-                    <span className="text-slate-500 font-medium text-xs mr-1">Nu.</span>
-                    {client.amount}
+                    {formatMoney(client, client.invoiceAmount ?? client.amount)}
                   </td>
                   <td>
                     <PaymentBadge value={client.paymentStatus} />
@@ -915,262 +963,335 @@ export function ClientTable({ clients, setClients, onViewDetails, onViewReport, 
         </div>
       )}
 
-      {statusMenuClient && (
-        <div className="ui-modal-backdrop" role="presentation" onClick={() => setStatusMenuClient(null)}>
+      {statusMenuClient && createPortal(
+        <div className="ui-modal-backdrop payment-workspace-backdrop" role="presentation" onClick={() => setStatusMenuClient(null)}>
           <div
-            className="glass-panel ui-modal-panel max-w-md motion-pop"
+            className="ui-modal-panel payment-status-modal motion-pop"
             role="dialog"
             aria-modal="true"
             aria-labelledby="payment-status-actions-title"
             onClick={(event) => event.stopPropagation()}
           >
-            <div className="ui-modal-header border-b border-slate-200/70 p-5 sm:p-6">
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <p className="text-[10px] font-black uppercase tracking-widest text-blue-700">Payment Status</p>
-                  <h3 id="payment-status-actions-title" className="mt-2 text-xl font-black text-slate-950">
-                    {statusMenuClient.name}
-                  </h3>
-                  <p className="mt-1 text-sm font-medium text-slate-500">
-                    Current status: <span className="font-black text-slate-800">{statusMenuClient.paymentStatus}</span>
-                  </p>
+            <div className="ui-modal-header flex items-start justify-between gap-4 border-b border-slate-200 px-5 py-4 sm:px-6">
+              <div className="flex min-w-0 items-start gap-3">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-blue-50 text-blue-800">
+                  <ReceiptText size={19} />
                 </div>
-                <button
-                  type="button"
-                  onClick={() => setStatusMenuClient(null)}
-                  className="ui-icon-btn"
-                  aria-label="Close payment status actions"
-                >
+                <div>
+                  <p className="text-[10px] font-black uppercase tracking-widest text-blue-700">Payment Control</p>
+                  <h3 id="payment-status-actions-title" className="mt-1 truncate text-lg font-black text-slate-950">{statusMenuClient.name}</h3>
+                  <p className="mt-1 text-xs font-medium text-slate-500">Review the ledger and choose the next payment action.</p>
+                </div>
+              </div>
+              <div className="flex shrink-0 items-center gap-2">
+                <PaymentBadge value={statusMenuClient.paymentStatus} />
+                <button type="button" onClick={() => setStatusMenuClient(null)} className="ui-icon-btn" aria-label="Close payment status actions">
                   <X size={16} />
                 </button>
               </div>
             </div>
-            <div className="ui-modal-body custom-scrollbar p-5 sm:p-6">
-              <div className="grid grid-cols-1 gap-3">
-                {[
-                  ["Paid", "Record Full Payment", "ui-btn-primary"],
-                  ["Partially Paid", "Record Part Payment", "ui-btn-secondary"],
-                  ["Unpaid", "Record No Payment", "ui-btn-danger"],
-                ].map(([status, label, tone]) => {
-                  const isCurrent = statusMenuClient.paymentStatus === status;
-                  const disabled = isCurrent && status !== "Partially Paid";
-                  return (
-                    <button
-                      key={status}
-                      type="button"
-                      disabled={disabled}
-                      onClick={() => {
-                        const clientId = statusMenuClient.id;
-                        setStatusMenuClient(null);
-                        handlePaymentAction(clientId, status);
-                      }}
-                      className={cn("ui-btn ui-btn-md w-full", tone, isCurrent && "ring-2 ring-slate-200")}
-                    >
-                      {label}
-                      {isCurrent && <span className="ml-1 text-[10px] font-black uppercase tracking-widest opacity-70">{status === "Partially Paid" ? "Add More" : "Current"}</span>}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-            <div className="ui-modal-footer border-t border-slate-200/70 bg-white/70 p-4 sm:p-5">
-              <button type="button" onClick={() => setStatusMenuClient(null)} className="ui-btn ui-btn-md ui-btn-secondary w-full">
-                Cancel
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Custom Confirmation Modal */}
-      {confirmAction && (
-        <div className="ui-modal-backdrop">
-          <div className="glass-panel ui-modal-panel max-w-md motion-pop">
-            <div className="ui-modal-body custom-scrollbar p-5 sm:p-8">
-            <div className="w-12 h-12 rounded-2xl bg-amber-100 text-amber-600 flex items-center justify-center mb-6 shadow-inner">
-              <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z" /><path d="M12 9v4" /><path d="M12 17h.01" /></svg>
-            </div>
-            <h3 className="text-xl font-bold text-slate-900 mb-2">
-              {clients.find(c => c.id === confirmAction.clientId)?.paymentStatus === "Paid" ? "Update Payment Record" : "Confirm Payment"}
-            </h3>
-            <p className="text-sm text-slate-500 mb-6 leading-relaxed">
-              {clients.find(c => c.id === confirmAction.clientId)?.paymentStatus === "Paid" 
-                ? `You are updating the journal and bank records for ${clients.find(c => c.id === confirmAction.clientId)?.name}.`
-                : `Record the payment received now. The system adds it to previous receipts and updates the status automatically.`}
-            </p>
-
-            {confirmAction.isBlockchainRevision && (
-              <div className="mb-6 space-y-4">
-                <div className="rounded-2xl border border-amber-100 bg-amber-50/80 p-4">
-                  <div className="flex items-start gap-3">
-                    <AlertTriangle className="mt-0.5 text-amber-600" size={18} />
+            <div className="ui-modal-body custom-scrollbar p-0">
+              <div className="grid min-h-0 lg:grid-cols-[0.92fr_1.08fr]">
+                <section className="p-5 sm:p-6">
+                  <div className="grid grid-cols-2 gap-x-6 gap-y-4 border-b border-slate-200 pb-5 text-xs">
                     <div>
-                      <p className="text-xs font-black uppercase tracking-widest text-amber-800">New Audit Revision</p>
-                      <p className="mt-1 text-xs font-semibold leading-5 text-amber-800">
-                        The original blockchain record will stay unchanged. This update will be saved as a revision with who changed it, when, what changed, and why.
-                      </p>
+                      <p className="font-black uppercase tracking-widest text-slate-400">Invoice Journal</p>
+                      <p className="mt-1 font-mono text-sm font-black text-slate-900">{statusMenuClient.journalNo || "-"}</p>
+                    </div>
+                    <div>
+                      <p className="font-black uppercase tracking-widest text-slate-400">Invoice Total</p>
+                      <p className="mt-1 font-mono text-sm font-black text-slate-900">{formatMoney(statusMenuClient, statusMenuClient.invoiceAmount ?? statusMenuClient.amount)}</p>
+                    </div>
+                    <div>
+                      <p className="font-black uppercase tracking-widest text-slate-400">Received</p>
+                      <p className="mt-1 font-mono text-sm font-black text-emerald-700">{formatMoney(statusMenuClient, statusMenuClient.amountReceived)}</p>
+                    </div>
+                    <div>
+                      <p className="font-black uppercase tracking-widest text-slate-400">Balance Due</p>
+                      <p className="mt-1 font-mono text-sm font-black text-slate-900">{formatMoney(statusMenuClient, getBalanceDue(statusMenuClient))}</p>
                     </div>
                   </div>
-                </div>
-                <label className="block">
-                  <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">
-                    Revision Reason <span className="text-rose-500">*</span>
-                  </span>
-                  <textarea
-                    rows={3}
-                    value={revisionReason}
-                    onChange={(event) => setRevisionReason(event.target.value)}
-                    placeholder="Explain why this locked blockchain record needs a revision..."
-                    className="premium-input mt-2 w-full rounded-2xl px-4 py-3 text-sm text-slate-900 placeholder:text-slate-400 outline-none resize-none"
-                  />
-                </label>
-              </div>
-            )}
-
-            {confirmAction.newStatus !== "Unpaid" && (
-              <div className="space-y-6 mb-8">
-                <div className="rounded-lg border border-[var(--ct-line)] bg-[var(--ct-green-50)]/80 px-4 py-3 text-sm font-bold text-[var(--ct-charcoal)]">
-                  Outstanding balance:{" "}
-                  <span className="font-mono text-[var(--ct-primary-emerald)]">
-                    {formatMoney(
-                      clients.find(c => c.id === confirmAction.clientId),
-                      getBalanceDue(clients.find(c => c.id === confirmAction.clientId)),
+                  <div className="mt-5">
+                    <p className="text-xs font-black uppercase tracking-widest text-slate-500">Next action</p>
+                    <div className="mt-3 divide-y divide-slate-100 overflow-hidden rounded-lg border border-slate-200 bg-white">
+                      {[
+                        { status: "Paid", label: "Pay remaining balance", description: "Record the full outstanding amount", Icon: CircleDollarSign },
+                        { status: "Partially Paid", label: "Add part payment", description: "Record another payment and keep the balance open", Icon: PieChart },
+                        { status: "Unpaid", label: "Confirm no payment", description: "Use only when no payment has been recorded", Icon: CircleOff },
+                      ].map(({ status, label, description, Icon }) => {
+                        const isCurrent = statusMenuClient.paymentStatus === status;
+                        const hasBalance = getBalanceDue(statusMenuClient) > 0;
+                        const hasPayments = numericAmount(statusMenuClient.amountReceived) > 0;
+                        const disabled = status === "Unpaid" ? hasPayments || isCurrent : !hasBalance;
+                        return (
+                          <div key={status} className={cn("flex items-center gap-3 p-3", disabled && "bg-slate-50/70 opacity-55")}>
+                            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-white text-blue-800">
+                              <Icon size={17} />
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <p className="text-sm font-black text-slate-900">{label}</p>
+                                {isCurrent && <span className="ui-status-badge bg-slate-100 text-slate-600 border-slate-200">Current</span>}
+                              </div>
+                              <p className="mt-0.5 text-xs font-medium leading-4 text-slate-500">{description}</p>
+                            </div>
+                            <button
+                              type="button"
+                              disabled={disabled}
+                              onClick={() => {
+                                const clientId = statusMenuClient.id;
+                                setStatusMenuClient(null);
+                                handlePaymentAction(clientId, status);
+                              }}
+                              className="ui-icon-btn shrink-0 text-blue-800"
+                              aria-label={label}
+                            >
+                              <ArrowRight size={16} />
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    {getBalanceDue(statusMenuClient) <= 0 && (
+                      <div className="mt-4 flex items-center gap-2 rounded-lg bg-emerald-50 px-3 py-2.5 text-xs font-bold text-emerald-700">
+                        <CheckCircle2 size={16} /> This invoice is fully settled.
+                      </div>
                     )}
-                  </span>
-                </div>
-                <div className={cn(
-                  "rounded-2xl border px-4 py-3 text-xs font-black uppercase tracking-widest",
-                  automaticStatusFor(
-                    clients.find(c => c.id === confirmAction.clientId),
-                    paymentTotalAfterEntry(clients.find(c => c.id === confirmAction.clientId), paymentForm.amountReceived),
-                  ) === "Paid"
-                    ? "border-emerald-100 bg-emerald-50 text-emerald-700"
-                    : "border-amber-100 bg-amber-50 text-amber-700",
-                )}>
-                  Automatic status: {automaticStatusFor(
-                    clients.find(c => c.id === confirmAction.clientId),
-                    paymentTotalAfterEntry(clients.find(c => c.id === confirmAction.clientId), paymentForm.amountReceived),
-                  )}
-                  <span className="ml-2 opacity-70">
-                    Current {formatMoney(clients.find(c => c.id === confirmAction.clientId), clients.find(c => c.id === confirmAction.clientId)?.amountReceived)} + This payment {formatMoney(clients.find(c => c.id === confirmAction.clientId), paymentForm.amountReceived)}
-                  </span>
-                </div>
-                <div>
-                  <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">
-                    Journal Number <span className="text-rose-500">*</span>
-                  </label>
-                  <input
-                    type="text"
-                    value={journalInput}
-                    onChange={(e) => setJournalInput(e.target.value)}
-                    placeholder="e.g. J-8472"
-                    autoFocus
-                    className="premium-input w-full rounded-2xl py-3 px-4 text-sm text-slate-900 placeholder:text-slate-400 outline-none transition-all duration-200"
-                  />
-                </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">
-                      Payment Sender <span className="text-rose-500">*</span>
-                    </label>
-                    <input
-                      type="text"
-                      value={paymentForm.paymentSender}
-                      onChange={(e) => setPaymentForm(prev => ({ ...prev, paymentSender: e.target.value }))}
-                      placeholder="Sender name"
-                      className="premium-input w-full rounded-2xl py-3 px-4 text-sm text-slate-900 placeholder:text-slate-400 outline-none"
-                    />
                   </div>
-                  <div>
-                    <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">
-                      Method <span className="text-rose-500">*</span>
-                    </label>
-                  <select
-                      value={paymentForm.paymentMethod}
-                      onChange={(e) => setPaymentForm(prev => ({ ...prev, paymentMethod: e.target.value }))}
-                      className="premium-input ui-select w-full rounded-2xl py-3 px-4 text-sm text-slate-900 outline-none"
-                    >
-                      <option>Bank Transfer</option>
-                      <option>Cheque</option>
-                      <option>Cash Deposit</option>
-                      <option>Digital Payment</option>
-                    </select>
+                </section>
+                <section className="border-t border-slate-200 bg-slate-50/70 p-5 sm:p-6 lg:border-l lg:border-t-0">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-xs font-black uppercase tracking-widest text-slate-500">Payment Journals</p>
+                      <p className="mt-1 text-xs font-medium text-slate-500">Each receipt remains as a separate ledger entry.</p>
+                    </div>
+                    <span className="ui-status-badge bg-white text-slate-600 border-slate-200">
+                      {statusMenuClient.paymentHistory?.length || 0} {(statusMenuClient.paymentHistory?.length || 0) === 1 ? "entry" : "entries"}
+                    </span>
                   </div>
-                  <div>
-                    <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">
-                      Payment Reference <span className="text-rose-500">*</span>
-                    </label>
-                    <input
-                      type="text"
-                      value={paymentForm.paymentReference}
-                      onChange={(e) => setPaymentForm(prev => ({ ...prev, paymentReference: e.target.value }))}
-                      placeholder="Bank reference"
-                      className="premium-input w-full rounded-2xl py-3 px-4 text-sm text-slate-900 placeholder:text-slate-400 outline-none"
-                    />
+                  <div className="mt-4 space-y-2">
+                    {statusMenuClient.paymentHistory?.length > 0 ? statusMenuClient.paymentHistory.map((entry, index) => (
+                      <div key={entry.id || `${entry.journalNo}-${index}`} className="rounded-lg border border-slate-200 bg-white p-3.5">
+                        <div className="flex items-start justify-between gap-4">
+                          <div className="min-w-0">
+                            <p className="truncate font-mono text-xs font-black text-slate-900">{entry.journalNo || "Legacy entry"}</p>
+                            <p className="mt-1 truncate text-xs font-medium text-slate-500">{entry.reference || "No reference"}</p>
+                          </div>
+                          <p className="shrink-0 font-mono text-sm font-black text-slate-900">{formatMoney(statusMenuClient, entry.amount)}</p>
+                        </div>
+                        <div className="mt-3 flex items-center justify-between border-t border-slate-100 pt-2 text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                          <span>{entry.bank || entry.method || "Payment"}</span>
+                          <span>{entry.date || "Date unavailable"}</span>
+                        </div>
+                      </div>
+                    )) : (
+                      <div className="rounded-lg border border-dashed border-slate-300 bg-white/70 px-4 py-8 text-center">
+                        <ReceiptText className="mx-auto text-slate-400" size={21} />
+                        <p className="mt-2 text-sm font-bold text-slate-700">No payment entries yet</p>
+                        <p className="mt-1 text-xs text-slate-500">The first verified receipt will appear here.</p>
+                      </div>
+                    )}
                   </div>
-                  <div>
-                    <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">
-                      {confirmAction.newStatus === "Paid" ? "Payment Amount" : "Part Payment Amount"} <span className="text-rose-500">*</span>
-                    </label>
-                    <input
-                      type="number"
-                      min="1"
-                      value={paymentForm.amountReceived}
-                      onChange={(e) => setPaymentForm(prev => ({ ...prev, amountReceived: e.target.value }))}
-                      className="premium-input w-full rounded-2xl py-3 px-4 text-sm text-slate-900 outline-none"
-                    />
-                  </div>
-                  <div className="sm:col-span-2">
-                    <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">
-                      Payment Date <span className="text-rose-500">*</span>
-                    </label>
-                    <input
-                      type="date"
-                      value={paymentForm.paymentDate}
-                      onChange={(e) => setPaymentForm(prev => ({ ...prev, paymentDate: e.target.value }))}
-                      className="premium-input w-full rounded-2xl py-3 px-4 text-sm text-slate-900 outline-none"
-                    />
-                  </div>
-                </div>
+                </section>
               </div>
-            )}
-
-            {confirmAction.newStatus === "Unpaid" && (
-              <div className="mb-8">
-                <div className="mb-4 rounded-2xl border border-rose-100 bg-rose-50 px-4 py-3 text-xs font-black uppercase tracking-widest text-rose-700">
-                  Automatic status: Unpaid
-                </div>
-                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">
-                  Verification Remarks
-                </label>
-                <textarea
-                  rows={3}
-                  value={paymentForm.verificationRemarks}
-                  onChange={(e) => setPaymentForm(prev => ({ ...prev, verificationRemarks: e.target.value }))}
-                  placeholder="Add a short reason or review note..."
-                  className="premium-input w-full rounded-2xl py-3 px-4 text-sm text-slate-900 placeholder:text-slate-400 outline-none resize-none"
-                />
-              </div>
-            )}
             </div>
-            <div className="ui-modal-footer border-t border-slate-200/70 bg-white/70 p-4 sm:p-5">
-              <div className="flex items-center gap-3 w-full">
-              <button
-                onClick={() => setConfirmAction(null)}
-                className="ui-btn ui-btn-md ui-btn-secondary flex-1"
-              >
-                Cancel
+            <div className="ui-modal-footer flex justify-end border-t border-slate-200 bg-white px-5 py-3 sm:px-6">
+              <button type="button" onClick={() => setStatusMenuClient(null)} className="ui-btn ui-btn-md ui-btn-secondary min-w-28">
+                Close
               </button>
-              <button
-                onClick={executeAction}
-                className="ui-btn ui-btn-md ui-btn-primary flex-1"
-              >
-                {confirmAction.isBlockchainRevision ? "Submit Revision" : "Confirm"}
+            </div>
+          </div>
+        </div>,
+        document.body,
+      )}
+
+      {confirmAction && createPortal(
+        <div className="ui-modal-backdrop payment-workspace-backdrop">
+          <div className="ui-modal-panel payment-entry-modal motion-pop" role="dialog" aria-modal="true" aria-labelledby="payment-entry-title">
+            <div className="ui-modal-header payment-entry-header">
+              <div className="payment-entry-heading">
+                <div className="payment-entry-heading-icon">
+                  <CircleDollarSign size={20} />
+                </div>
+                <div className="payment-entry-heading-copy">
+                  <p className="payment-entry-eyebrow">Payment entry</p>
+                  <h3 id="payment-entry-title">
+                    {confirmAction.newStatus === "Unpaid" ? "Confirm no payment" : confirmAction.newStatus === "Paid" ? "Pay remaining balance" : "Add part payment"}
+                  </h3>
+                  <p>{activePaymentClient?.name} <span aria-hidden="true">&middot;</span> Invoice {activePaymentClient?.journalNo}</p>
+                </div>
+              </div>
+              <button type="button" onClick={() => setConfirmAction(null)} className="ui-icon-btn" aria-label="Close payment entry">
+                <X size={18} />
               </button>
+            </div>
+            <div className="ui-modal-body custom-scrollbar payment-entry-scroll">
+              {confirmAction.isBlockchainRevision && (
+                <div className="payment-revision-notice">
+                  <AlertTriangle className="mt-0.5 shrink-0" size={17} />
+                  <span>The original blockchain record remains unchanged. This update will be stored as a traceable revision.</span>
+                </div>
+              )}
+              {confirmAction.newStatus !== "Unpaid" ? (
+                <>
+                  <section className="payment-balance-summary" aria-label="Payment summary">
+                    <div className="payment-balance-summary-top">
+                      <div>
+                        <p className="payment-summary-label">Outstanding balance</p>
+                        <p className="payment-balance-amount">{formatMoney(activePaymentClient, activePaymentBalance)}</p>
+                      </div>
+                      <div className="payment-summary-projected">
+                        <span>After payment</span>
+                        <PaymentBadge value={projectedPaymentStatus} />
+                      </div>
+                    </div>
+                    <div className="payment-progress-row">
+                      <div className="payment-progress-track" aria-label={`${projectedPaymentProgress}% paid after this entry`}>
+                        <span className="payment-progress-current" style={{ width: `${activePaymentProgress}%` }} />
+                        <span className="payment-progress-added" style={{ left: `${activePaymentProgress}%`, width: `${Math.max(0, projectedPaymentProgress - activePaymentProgress)}%` }} />
+                      </div>
+                      <span>{projectedPaymentProgress}% paid after entry</span>
+                    </div>
+                    <dl className="payment-summary-grid">
+                      <div>
+                        <dt>Invoice total</dt>
+                        <dd>{formatMoney(activePaymentClient, activePaymentTotal)}</dd>
+                      </div>
+                      <div>
+                        <dt>Paid to date</dt>
+                        <dd>{formatMoney(activePaymentClient, activePaymentReceived)}</dd>
+                      </div>
+                      <div>
+                        <dt>This payment</dt>
+                        <dd>{formatMoney(activePaymentClient, activePaymentEntryAmount)}</dd>
+                      </div>
+                      <div className="payment-summary-balance-after">
+                        <dt>Balance after</dt>
+                        <dd>{formatMoney(activePaymentClient, projectedPaymentBalance)}</dd>
+                      </div>
+                    </dl>
+                    <div className="payment-journal-rule">
+                      <ShieldCheck size={17} />
+                      <span><strong>Original journal {activePaymentClient?.journalNo || "-"} stays unchanged.</strong> This receipt will be saved as a separate payment entry.</span>
+                    </div>
+                  </section>
+
+                  <section className="payment-form-section">
+                    <div className="payment-form-heading">
+                      <div>
+                        <h4>Payment details</h4>
+                        <p>Enter the receipt information below. Required fields are marked with an asterisk.</p>
+                      </div>
+                      <div className="payment-result-preview">
+                        <span>After saving</span>
+                        <strong>{projectedPaymentStatus}</strong>
+                      </div>
+                    </div>
+                    <div className="payment-form-grid">
+                      <label>
+                        <span className="payment-field-label">New Payment Journal Number *</span>
+                        <input type="text" value={journalInput} onChange={(event) => setJournalInput(event.target.value)} placeholder="e.g. PAY-J-8472-02" autoFocus className="premium-input" />
+                      </label>
+                      <label>
+                        <span className="payment-field-label">{confirmAction.newStatus === "Paid" ? "Payment Amount" : "Part Payment Amount"} *</span>
+                        <input type="number" min="1" max={activePaymentBalance} value={paymentForm.amountReceived} onChange={(event) => setPaymentForm((prev) => ({ ...prev, amountReceived: event.target.value }))} className="premium-input payment-amount-input" />
+                      </label>
+                      <label>
+                        <span className="payment-field-label">Payment Date *</span>
+                        <input type="date" value={paymentForm.paymentDate} onChange={(event) => setPaymentForm((prev) => ({ ...prev, paymentDate: event.target.value }))} className="premium-input" />
+                      </label>
+                      <label>
+                        <span className="payment-field-label">Payment Method *</span>
+                        <select
+                          value={paymentForm.paymentMethod}
+                          onChange={(event) => setPaymentForm((prev) => ({
+                            ...prev,
+                            paymentMethod: event.target.value,
+                            bank: event.target.value === "Bank Transfer" ? prev.bank : "",
+                          }))}
+                          className="premium-input ui-select"
+                        >
+                          <option>Bank Transfer</option><option>Cheque</option><option>Cash Deposit</option><option>Digital Payment</option>
+                        </select>
+                      </label>
+                      {paymentForm.paymentMethod === "Bank Transfer" && (
+                        <fieldset className="payment-bank-field payment-field-wide">
+                          <legend className="payment-field-label">Financial Institution *</legend>
+                          <div className="payment-bank-options">
+                            {banks.map((bank) => {
+                              const selected = paymentForm.bank === bank.name;
+                              return (
+                                <button
+                                  key={bank.name}
+                                  type="button"
+                                  aria-pressed={selected}
+                                  onClick={() => setPaymentForm((prev) => ({ ...prev, bank: bank.name }))}
+                                  className={cn("payment-bank-option", selected && "is-selected")}
+                                >
+                                  <img src={bank.logo} alt="" />
+                                  <span>{bank.name}</span>
+                                  {selected && <CheckCircle2 className="payment-bank-check" size={15} aria-hidden="true" />}
+                                </button>
+                              );
+                            })}
+                          </div>
+                          <p className="payment-bank-selection-text">
+                            {paymentForm.bank ? `${paymentForm.bank} selected for this payment.` : "Select the receiving bank."}
+                          </p>
+                        </fieldset>
+                      )}
+                      <label>
+                        <span className="payment-field-label">Payment Sender *</span>
+                        <input type="text" value={paymentForm.paymentSender} onChange={(event) => setPaymentForm((prev) => ({ ...prev, paymentSender: event.target.value }))} placeholder="Name on the payment" className="premium-input" />
+                      </label>
+                      <label>
+                        <span className="payment-field-label">Payment Reference *</span>
+                        <input type="text" value={paymentForm.paymentReference} onChange={(event) => setPaymentForm((prev) => ({ ...prev, paymentReference: event.target.value }))} placeholder="Bank or receipt reference" className="premium-input" />
+                      </label>
+                      <label className="payment-field-wide">
+                        <span className="payment-field-label">Verification Note</span>
+                        <textarea rows={2} value={paymentForm.verificationRemarks} onChange={(event) => setPaymentForm((prev) => ({ ...prev, verificationRemarks: event.target.value }))} placeholder="Optional note for the audit trail" className="premium-input" />
+                      </label>
+                      {confirmAction.isBlockchainRevision && (
+                        <label className="payment-field-wide">
+                          <span className="payment-field-label">Revision Reason *</span>
+                          <textarea rows={2} value={revisionReason} onChange={(event) => setRevisionReason(event.target.value)} placeholder="Explain why this locked record needs a revision" className="premium-input" />
+                        </label>
+                      )}
+                    </div>
+                  </section>
+                </>
+              ) : (
+                <div className="mx-auto max-w-xl p-5 sm:p-8">
+                  <div className="flex items-start gap-3 rounded-lg border border-rose-200 bg-rose-50 p-4">
+                    <CircleOff className="mt-0.5 shrink-0 text-rose-700" size={18} />
+                    <div>
+                      <p className="text-sm font-black text-rose-900">Confirm that no payment was received</p>
+                      <p className="mt-1 text-xs font-medium leading-5 text-rose-700">This is available only when the invoice has no payment journal entries.</p>
+                    </div>
+                  </div>
+                  <label className="mt-5 block">
+                    <span className="payment-field-label">Verification Note</span>
+                    <textarea rows={4} value={paymentForm.verificationRemarks} onChange={(event) => setPaymentForm((prev) => ({ ...prev, verificationRemarks: event.target.value }))} placeholder="Add a short review note" className="premium-input mt-2 w-full resize-none px-4 py-3 text-sm outline-none" />
+                  </label>
+                </div>
+              )}
+            </div>
+            <div className="ui-modal-footer payment-entry-footer">
+              <div className="payment-auto-status-note">
+                <CheckCircle2 size={16} />
+                <span>Status and balance update automatically after saving.</span>
+              </div>
+              <div className="payment-entry-actions">
+                <button type="button" onClick={() => setConfirmAction(null)} className="ui-btn ui-btn-md ui-btn-secondary">Cancel</button>
+                <button type="button" onClick={executeAction} className="ui-btn ui-btn-md ui-btn-primary min-w-36">
+                  {confirmAction.isBlockchainRevision ? "Submit Revision" : confirmAction.newStatus === "Unpaid" ? "Confirm No Payment" : "Record Payment"}
+                </button>
               </div>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
 
       {revisionSuccess && (

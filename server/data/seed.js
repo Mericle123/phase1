@@ -1,11 +1,21 @@
 export const roleLabels = {
   employee: "Employee / Data Entry User",
+  verifier: "Payment Verifier",
   admin: "System Administrator",
   super_admin: "Super Admin",
 };
 
 export const rolePermissions = {
   employee: ["invoice:create", "invoice:read-own", "journal:check"],
+  verifier: [
+    "invoice:read-all",
+    "invoice:update",
+    "payment:verify",
+    "blockchain:commit",
+    "reports:read",
+    "notifications:send-employee",
+    "journal:check",
+  ],
   admin: [
     "invoice:read-all",
     "invoice:update",
@@ -74,6 +84,20 @@ export const seedUsers = [
     active: true,
     avatar: "https://api.dicebear.com/7.x/avataaars/svg?seed=Pema&backgroundColor=e2e8f0",
   },
+  {
+    id: "u-verifier",
+    name: "Sonam Wangmo",
+    email: "verifier@counttale.bt",
+    password: "Verifier@123",
+    role: "verifier",
+    designation: "Payment Verification Officer",
+    phone: "+975 17660022",
+    location: "Thimphu, Bhutan",
+    workId: "CT-105-VER",
+    joined: "April 2025",
+    active: true,
+    avatar: "https://api.dicebear.com/7.x/avataaars/svg?seed=SonamWangmo&backgroundColor=e2e8f0",
+  },
 ];
 
 const baseFinancials = {
@@ -116,7 +140,7 @@ export const seedInvoices = [
     amountReceived: 1250000,
     paymentDate: "2026-05-08",
     verificationRemarks: "Bank reference and sender details verified.",
-    verifiedBy: "u-admin-regular",
+    verifiedBy: "u-verifier",
     verifiedAt: "2026-05-08T09:32:00.000Z",
     enteredBy: "u-employee",
     createdAt: "2026-05-01T07:12:00.000Z",
@@ -126,7 +150,7 @@ export const seedInvoices = [
       transactionId: "FABRIC-SEED-J-8472",
       blockNumber: 1024,
       committedAt: "2026-05-08T09:33:00.000Z",
-      submittedBy: "u-admin-regular",
+      submittedBy: "u-verifier",
       response: "Committed",
     },
     financialData: { ...baseFinancials, capitalCost: "1250000" },
@@ -156,6 +180,7 @@ export const seedInvoices = [
     paymentHistory: [
       {
         id: "pay-seed-002-1",
+        journalNo: "J-2207",
         amount: 150000,
         sender: "Namgay Samdrup Enterprise",
         method: "Bank Transfer",
@@ -169,8 +194,8 @@ export const seedInvoices = [
     ],
     paymentDate: "2026-05-05",
     verificationRemarks: "Part payment recorded; remaining balance pending.",
-    verifiedBy: "",
-    verifiedAt: "",
+    verifiedBy: "u-verifier",
+    verifiedAt: "2026-05-05T09:20:00.000Z",
     enteredBy: "u-employee",
     createdAt: "2026-05-03T08:00:00.000Z",
     updatedAt: "2026-05-03T08:00:00.000Z",
@@ -191,7 +216,7 @@ export const seedInvoices = [
     invoiceDate: "2026-05-04",
     journalNo: "J-6310",
     invoiceAmount: 3100000,
-    currency: "USD",
+    currency: "BTN",
     description: "Foreign client project finance invoice.",
     paymentStatus: "Unpaid",
     adminReviewStatus: "Flagged",
@@ -202,8 +227,8 @@ export const seedInvoices = [
     amountReceived: 0,
     paymentDate: "",
     verificationRemarks: "Awaiting confirmed remittance details.",
-    verifiedBy: "",
-    verifiedAt: "",
+    verifiedBy: "u-verifier",
+    verifiedAt: "2026-05-04T10:20:00.000Z",
     enteredBy: "u-employee",
     createdAt: "2026-05-04T10:11:00.000Z",
     updatedAt: "2026-05-04T10:11:00.000Z",
@@ -263,7 +288,7 @@ export const seedInvoices = [
     invoiceDate: "2026-05-11",
     journalNo: "J-7738",
     invoiceAmount: 2200000,
-    currency: "USD",
+    currency: "BTN",
     description: "Foreign logistics invoice with a partial remittance under administrator review.",
     paymentStatus: "Partially Paid",
     adminReviewStatus: "Pending Review",
@@ -275,6 +300,7 @@ export const seedInvoices = [
     paymentHistory: [
       {
         id: "pay-seed-005-1",
+        journalNo: "J-7738",
         amount: 800000,
         sender: "Everest Logistics",
         method: "International Transfer",

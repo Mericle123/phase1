@@ -6,7 +6,7 @@ import { cn } from "../lib/utils";
 import { api } from "../services/api";
 import { TaskLoader } from "./TaskLoader";
 
-const canCompose = (user) => ["super_admin", "admin"].includes(user?.role);
+const canCompose = (user) => ["super_admin", "admin", "verifier"].includes(user?.role);
 
 const formatTime = (value) => {
   if (!value) return "";

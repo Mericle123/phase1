@@ -1,5 +1,5 @@
 const currencyLabels = {
-  BTN: "Nu.",
+  BTN: "BTN",
   NZD: "NZD",
   INR: "INR",
   EUR: "EUR",

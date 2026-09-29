@@ -347,9 +347,9 @@ export function ClientReport({ client, onBack, onViewDetails }) {
                 <thead>
                   <tr className="text-[10px] font-black text-slate-400 uppercase tracking-widest border-b border-slate-100">
                     <th className="pb-4">Year</th>
-                    <th className="pb-4 text-right">Opening Value (Nu.)</th>
+                    <th className="pb-4 text-right">Opening Value (BTN)</th>
                     <th className="pb-4 text-right">Depreciation (15%)</th>
-                    <th className="pb-4 text-right">Closing Value (Nu.)</th>
+                    <th className="pb-4 text-right">Closing Value (BTN)</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-50">

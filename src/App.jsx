@@ -41,8 +41,9 @@ const viewTitles = {
 
 const isAdminUser = (user) => ["admin", "super_admin"].includes(user?.role);
 const isSuperAdmin = (user) => user?.role === "super_admin";
+const isVerifier = (user) => user?.role === "verifier";
 const canCreate = (user) => user?.role === "employee";
-const canVerify = (user) => ["admin", "super_admin"].includes(user?.role);
+const canVerify = (user) => ["verifier", "admin", "super_admin"].includes(user?.role);
 const minimumLoginLoadingMs = 450;
 const isPartialPayment = (status) => status === "Partially Paid" || status === "Pending";
 const viewLoadingType = {
@@ -78,6 +79,7 @@ function App() {
   const [user, setUser] = useState(null);
   const [isBooting, setIsBooting] = useState(Boolean(api.token));
   const [isLoginLoading, setIsLoginLoading] = useState(false);
+  const [selectedDraft, setSelectedDraft] = useState(null);
   const previousView = useRef(view);
 
   useEffect(() => {
@@ -134,6 +136,7 @@ function App() {
         setUser(currentUser);
         if (isSuperAdmin(currentUser)) setView("super-admin");
         else if (isAdminUser(currentUser)) setView("admin");
+        else if (isVerifier(currentUser)) setView("directory");
         await loadWorkspace();
       })
       .catch(() => {
@@ -220,10 +223,10 @@ function App() {
   const homeView = isSuperAdmin(user) ? "super-admin" : isAdminUser(user) ? "admin" : "directory";
 
   const protectedNotice = useMemo(() => {
-    if (view === "entry" && !canCreate(user)) return "Only employees can create normal invoice records. Admin focuses on review, approval, and monitoring.";
+    if (view === "entry" && !canCreate(user)) return "Only employees can create normal invoice records. Verifiers and administrators focus on review, payment confirmation, and monitoring.";
     if (view === "admin" && !isAdminUser(user)) return "The admin dashboard is available to administrators only.";
     if (view === "super-admin" && !isSuperAdmin(user)) return "The Super Admin dashboard is available to the owner account only.";
-    if (view === "payments" && user?.role === "employee") return "Payment verification is available to Admin and Super Admin roles.";
+    if (view === "payments" && user?.role === "employee") return "Payment verification is available to Verifier, Admin, and Super Admin roles.";
     if (view === "activity" && !isAdminUser(user)) return "Employee activity monitoring is available to administrators only.";
     if (view === "timing" && !isAdminUser(user)) return "Employee timing is available to administrators only.";
     if (view === "unusual" && !isAdminUser(user)) return "Unusual entry monitoring is available to administrators only.";
@@ -286,6 +289,14 @@ function App() {
           setIsSettingsOpen={setIsSettingsOpen}
           user={user}
           onLogout={handleLogout}
+          onOpenDraft={(draft) => {
+            setSelectedDraft(draft);
+            setView("entry");
+          }}
+          onCreateInvoice={() => {
+            setSelectedDraft(null);
+            setView("entry");
+          }}
         />
 
         <div className="flex-1 overflow-auto bg-transparent relative z-0 custom-scrollbar">
@@ -323,13 +334,15 @@ function App() {
                   <div className="ct-hero-content">
                     <div className="ct-eyebrow">
                       <ShieldCheck size={14} />
-                      NZ Britannia Financial Ledger
+                      {isVerifier(user) ? "Verifier Payment Desk" : "NZ Britannia Financial Ledger"}
                     </div>
                     <h1 className="mt-5 text-4xl font-black tracking-tight text-white md:text-5xl">
-                      Every client record, traceable.
+                      {isVerifier(user) ? "Every payment, clearly verified." : "Every client record, traceable."}
                     </h1>
                     <p className="mt-4 max-w-2xl text-sm font-medium leading-7 text-white/68">
-                      Follow every invoice from entry to payment, verification, responsibility, and trusted ledger trace.
+                      {isVerifier(user)
+                        ? "Review journal entries, confirm full or partial payments, record unpaid invoices, and keep every payment decision traceable."
+                        : "Follow every invoice from entry to payment, verification, responsibility, and trusted ledger trace."}
                     </p>
                     <div className="ct-hero-trace-grid">
                       {[
@@ -374,11 +387,11 @@ function App() {
                       )}
                       {canVerify(user) && (
                         <button
-                          onClick={() => setView("analysis")}
+                          onClick={() => setView(isVerifier(user) ? "payments" : "analysis")}
                           className="ui-btn ui-btn-md ct-hero-secondary"
                         >
                           <Database size={18} />
-                          Financial Analysis
+                          {isVerifier(user) ? "Payment Verification" : "Financial Analysis"}
                         </button>
                       )}
                     </div>
@@ -389,30 +402,30 @@ function App() {
                   <StatCard
                     title="Total Records"
                     value={totalClients}
-                    subtext={<span className="text-emerald-500 font-bold">Live Data</span>}
+                    subtext={<span className="text-blue-700 font-bold">Live journal entries</span>}
                     icon={Users}
                     colorClass="ct-stat-tone-navy"
                   />
                   <StatCard
                     title="Paid"
                     value={paidCount}
-                    subtext="Verified payment records"
+                    subtext="Full payment recorded"
                     icon={CheckCircle2}
                     colorClass="ct-stat-tone-success"
                   />
                   <StatCard
-                    title="Partially Paid / Unpaid"
-                    value={pendingCount + unpaidCount}
-                    subtext={`${pendingCount} partially paid, ${unpaidCount} unpaid`}
+                    title="Partially Paid"
+                    value={pendingCount}
+                    subtext="Part payment recorded"
                     icon={ClipboardList}
-                    colorClass="ct-stat-tone-danger"
+                    colorClass="ct-stat-tone-sky"
                   />
                   <StatCard
-                    title="Fabric Committed"
-                    value={committedCount}
-                    subtext="Paid summaries on ledger"
+                    title="Unpaid"
+                    value={unpaidCount}
+                    subtext={isVerifier(user) ? "No payment recorded" : `${committedCount} paid records committed`}
                     icon={Database}
-                    colorClass="ct-stat-tone-sky"
+                    colorClass="ct-stat-tone-danger"
                   />
                 </div>
 
@@ -467,13 +480,22 @@ function App() {
               onVerifyPayment={canVerify(user) ? handleVerifyPayment : null}
               onViewInDirectory={(client) => {
                 setTableSearchQuery(client.name);
-                setView(homeView);
+                setView("directory");
               }}
             />
           ) : view === "timing" ? (
             <EmployeeTiming />
           ) : view === "entry" ? (
-            <DataEntry clients={clients} onBack={() => setView("directory")} onAddClient={handleAddInvoice} />
+            <DataEntry
+              key={selectedDraft?.id || "new-invoice"}
+              clients={clients}
+              draftToLoad={selectedDraft}
+              onBack={() => {
+                setSelectedDraft(null);
+                setView("directory");
+              }}
+              onAddClient={handleAddInvoice}
+            />
           ) : view === "analysis" ? (
             <FinancialDataAnalysis clients={clients} onViewDetails={openDetails} />
           ) : view === "super-admin" ? (

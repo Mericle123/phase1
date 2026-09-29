@@ -8,7 +8,7 @@ import BOBLogo from "../assets/BOB.png";
 import BDBLLogo from "../assets/BDBL.png";
 import BNBLogo from "../assets/BNB.png";
 import TBankLogo from "../assets/T-Bank.jpg";
-import DigitalKiduLogo from "../assets/DIgital kidu.png";
+import DigitalKiduLogo from "../assets/Digital-Kidu.png";
 
 const getEnteredByName = (record) =>
   record.enteredByName || record.submittedByName || record.employeeName || record.submittedBy?.name || "Unknown Employee";
@@ -16,7 +16,7 @@ const getEnteredByName = (record) =>
 const getEnteredByRole = (record) =>
   record.enteredByRole || record.submittedByRole || record.employeeRole || record.submittedBy?.roleLabel || "Employee";
 
-const canSeeEntryOwner = (user) => ["admin", "super_admin"].includes(user?.role);
+const canSeeEntryOwner = (user) => ["verifier", "admin", "super_admin"].includes(user?.role);
 
 const numericAmount = numericCurrencyAmount;
 const formatAmount = (value) => numericAmount(value).toLocaleString();
@@ -26,9 +26,9 @@ const formatMoney = (record, value) => formatCurrencyAmount(value, getCurrencyCo
 const getInvoiceAmount = (record) => record.invoiceAmount ?? record.amount;
 const isPartiallyPaid = (status) => status === "Partially Paid" || status === "Pending";
 
-export function PaymentsView({ clients, onViewInDirectory, user }) {
+export function PaymentsView({ clients, onViewInDirectory, onVerifyPayment, user }) {
   const [searchQuery, setSearchQuery] = useState("");
-  const [statusFilter, setStatusFilter] = useState("Open");
+  const [statusFilter, setStatusFilter] = useState("All");
   const showEntryOwner = canSeeEntryOwner(user);
   
   const pendingPayments = clients
@@ -41,6 +41,7 @@ export function PaymentsView({ clients, onViewInDirectory, user }) {
     .sort((a, b) => numericAmount(getInvoiceAmount(b)) - numericAmount(getInvoiceAmount(a)));
   const paymentRows = clients
     .filter((client) => {
+      if (statusFilter === "All") return true;
       if (statusFilter === "Open") return isPartiallyPaid(client.paymentStatus) || client.paymentStatus === "Unpaid";
       if (statusFilter === "Partially Paid") return isPartiallyPaid(client.paymentStatus);
       return client.paymentStatus === statusFilter;
@@ -89,7 +90,8 @@ export function PaymentsView({ clients, onViewInDirectory, user }) {
         "Balance Due": formatMoney(c, numericAmount(getInvoiceAmount(c)) - numericAmount(c.amountReceived)),
         "Payment Status": c.paymentStatus,
         ...(showEntryOwner ? { "Entered By": getEnteredByName(c), "Entered Role": getEnteredByRole(c) } : {}),
-        "Journal Ref": c.journalNo || "N/A",
+        "Invoice Journal": c.journalNo || "N/A",
+        "Payment Journals": (c.paymentHistory || []).map((entry) => entry.journalNo).filter(Boolean).join(", ") || "N/A",
         "Institution": c.bank || "N/A",
         "Category": c.category,
         "Location": c.location
@@ -114,7 +116,7 @@ export function PaymentsView({ clients, onViewInDirectory, user }) {
             Receivables Control
           </div>
           <h1 className="mt-4 text-3xl md:text-4xl font-black text-white tracking-tight">Payment Management</h1>
-          <p className="text-white/64 mt-1 font-medium">Focus on unpaid and part-paid records that still need action.</p>
+          <p className="text-white/64 mt-1 font-medium">Review full payments, part payments, and unpaid journal entries in one place.</p>
         </div>
         <button 
           onClick={handleExport}
@@ -125,14 +127,15 @@ export function PaymentsView({ clients, onViewInDirectory, user }) {
         </button>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
         {[
+          ["Paid", "Full payment recorded", "bg-emerald-50 text-emerald-700 border-emerald-100"],
           ["Partially Paid", "Part payments received", "bg-amber-50 text-amber-700 border-amber-100"],
           ["Unpaid", "No payment recorded", "bg-rose-50 text-rose-700 border-rose-100"],
-          ["Open", "Partially paid and unpaid", "bg-emerald-50 text-emerald-700 border-emerald-100"],
+          ["All", "Every journal entry", "bg-blue-50 text-blue-700 border-blue-100"],
         ].map(([status, detail, tone]) => {
-          const count = status === "Open"
-            ? clients.filter((client) => isPartiallyPaid(client.paymentStatus) || client.paymentStatus === "Unpaid").length
+          const count = status === "All"
+            ? clients.length
             : status === "Partially Paid"
               ? clients.filter((client) => isPartiallyPaid(client.paymentStatus)).length
               : clients.filter((client) => client.paymentStatus === status).length;
@@ -183,7 +186,7 @@ export function PaymentsView({ clients, onViewInDirectory, user }) {
       </div>
 
       <div className="space-y-6">
-        {/* Open Receivables */}
+        {/* Payment status ledger */}
         <div className="space-y-6">
           <div className="premium-card rounded-[1.6rem] overflow-hidden">
             <div className="p-6 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -192,13 +195,13 @@ export function PaymentsView({ clients, onViewInDirectory, user }) {
                   <Clock size={20} />
                 </div>
                 <div>
-                  <h2 className="text-lg font-black text-slate-900 tracking-tight">Unpaid & Partially Paid Records</h2>
-                  <p className="mt-1 text-xs font-medium text-slate-500">Showing {statusFilter === "Open" ? "partially paid and unpaid" : statusFilter.toLowerCase()} records.</p>
+                  <h2 className="text-lg font-black text-slate-900 tracking-tight">Payment Status Records</h2>
+                  <p className="mt-1 text-xs font-medium text-slate-500">Showing {statusFilter === "All" ? "paid, partially paid, and unpaid" : statusFilter.toLowerCase()} journal entries.</p>
                 </div>
               </div>
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-              <div className="flex rounded-2xl border border-slate-200 bg-slate-100/80 p-1 shadow-inner">
-                {["Open", "Partially Paid", "Unpaid"].map((status) => (
+              <div className="flex flex-wrap rounded-2xl border border-slate-200 bg-slate-100/80 p-1 shadow-inner">
+                {["All", "Paid", "Partially Paid", "Unpaid"].map((status) => (
                   <button
                     key={status}
                     type="button"
@@ -255,7 +258,12 @@ export function PaymentsView({ clients, onViewInDirectory, user }) {
                           </div>
                           <div>
                             <p className="text-sm font-bold text-slate-900">{payment.name}</p>
-                            <p className="text-[10px] font-mono text-slate-400">Ref: {payment.journalNo || "TRX-8821"}</p>
+                            <p className="text-[10px] font-mono text-slate-400">Invoice: {payment.journalNo || "TRX-8821"}</p>
+                            {payment.paymentHistory?.length > 0 && (
+                              <p className="mt-1 text-[10px] font-mono font-bold text-blue-700">
+                                Latest payment: {payment.paymentHistory.at(-1)?.journalNo || "Legacy entry"} / {payment.paymentHistory.length} journal{payment.paymentHistory.length === 1 ? "" : "s"}
+                              </p>
+                            )}
                             {isPartiallyPaid(payment.paymentStatus) && (
                               <p className="mt-1 text-[10px] font-black uppercase tracking-widest text-amber-600">Part payment received</p>
                             )}
@@ -294,7 +302,7 @@ export function PaymentsView({ clients, onViewInDirectory, user }) {
                           onClick={() => onViewInDirectory(payment)}
                           className="ui-btn ui-btn-sm ui-btn-secondary"
                         >
-                          View
+                          {onVerifyPayment ? "Manage" : "View"}
                         </button>
                       </td>
                     </tr>
@@ -321,7 +329,12 @@ export function PaymentsView({ clients, onViewInDirectory, user }) {
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
                       <p className="truncate text-sm font-black text-slate-900">{payment.name}</p>
-                      <p className="mt-1 font-mono text-[10px] font-bold text-slate-400">Ref: {payment.journalNo || "TRX-8821"}</p>
+                      <p className="mt-1 font-mono text-[10px] font-bold text-slate-400">Invoice: {payment.journalNo || "TRX-8821"}</p>
+                      {payment.paymentHistory?.length > 0 && (
+                        <p className="mt-1 font-mono text-[10px] font-bold text-blue-700">
+                          Latest payment: {payment.paymentHistory.at(-1)?.journalNo || "Legacy entry"} / {payment.paymentHistory.length} journal{payment.paymentHistory.length === 1 ? "" : "s"}
+                        </p>
+                      )}
                       {showEntryOwner && (
                         <p className="mt-1 text-[10px] font-black uppercase tracking-widest text-slate-400">
                           Entered by {getEnteredByName(payment)}
@@ -346,7 +359,7 @@ export function PaymentsView({ clients, onViewInDirectory, user }) {
                     </div>
                   </div>
                   <button onClick={() => onViewInDirectory(payment)} className="ui-btn ui-btn-sm ui-btn-secondary mt-4 w-full">
-                    View
+                    {onVerifyPayment ? "Manage" : "View"}
                   </button>
                 </article>
               ))}

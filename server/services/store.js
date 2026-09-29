@@ -18,11 +18,12 @@ const checkInGraceEndMinutes = 9 * 60 + 30;
 
 const roleDepartments = {
   employee: "Data Entry",
+  verifier: "Payment Verification",
   admin: "Administration",
   super_admin: "Administration",
 };
 
-const managedRoles = ["employee", "admin"];
+const managedRoles = ["employee", "verifier", "admin"];
 const adminRoles = ["admin", "super_admin"];
 const maxActiveAdmins = 5;
 const superAdminProfile = {
@@ -31,6 +32,18 @@ const superAdminProfile = {
   email: "ngawangg927@gmail.com",
   designation: "Super Admin",
   avatar: "https://api.dicebear.com/7.x/avataaars/svg?seed=NG&backgroundColor=e2e8f0",
+};
+const verifierProfile = {
+  id: "u-verifier",
+  name: "Sonam Wangmo",
+  email: "verifier@counttale.bt",
+  designation: "Payment Verification Officer",
+  phone: "+975 17660022",
+  location: "Thimphu, Bhutan",
+  workId: "CT-105-VER",
+  joined: "April 2025",
+  active: true,
+  avatar: "https://api.dicebear.com/7.x/avataaars/svg?seed=SonamWangmo&backgroundColor=e2e8f0",
 };
 
 const demoIdentityRebrand = new Map([
@@ -84,9 +97,11 @@ const normalizePaymentEntries = (entries = []) =>
   (Array.isArray(entries) ? entries : [])
     .map((entry) => ({
       id: entry.id || uuidv4(),
+      journalNo: String(entry.journalNo || entry.paymentJournalNo || "").trim(),
       amount: toAmount(entry.amount ?? entry.amountReceived),
       sender: entry.sender || entry.paymentSender || "",
       method: entry.method || entry.paymentMethod || "",
+      bank: entry.bank || "",
       reference: entry.reference || entry.paymentReference || "",
       date: entry.date || entry.paymentDate || "",
       remarks: entry.remarks || entry.verificationRemarks || "",
@@ -101,13 +116,15 @@ const sumPaymentEntries = (entries = []) =>
 
 const buildPaymentEntry = (payload, actor) => ({
   id: uuidv4(),
+  journalNo: String(payload.journalNo || payload.paymentJournalNo || "").trim(),
   amount: toAmount(payload.amount ?? payload.amountReceived),
   sender: payload.sender || payload.paymentSender || "",
   method: payload.method || payload.paymentMethod || "",
+  bank: payload.bank || "",
   reference: payload.reference || payload.paymentReference || "",
   date: payload.date || payload.paymentDate || "",
   remarks: payload.remarks || payload.verificationRemarks || "",
-  recordedAt: now(),
+  recordedAt: payload.recordedAt || now(),
   recordedBy: actor?.id || "",
   recordedByName: actor?.name || "",
 });
@@ -554,7 +571,7 @@ export const initStore = async () => {
     db = JSON.parse(raw);
     db.users = db.users || [];
     const originalUserCount = db.users.length;
-    db.users = db.users.filter((user) => !["auditor", "verifier"].includes(user.role));
+    db.users = db.users.filter((user) => user.role !== "auditor");
     let needsPersist = db.users.length !== originalUserCount;
     db.users.forEach((user) => {
       const brandedIdentity = demoIdentityRebrand.get(user.email?.toLowerCase());
@@ -615,9 +632,47 @@ export const initStore = async () => {
       });
       needsPersist = true;
     }
+    if (!db.users.some((user) => user.email?.toLowerCase() === verifierProfile.email)) {
+      db.users.push({
+        ...verifierProfile,
+        passwordHash: await bcrypt.hash("Verifier@123", 10),
+        role: "verifier",
+      });
+      needsPersist = true;
+    }
     db.invoices = db.invoices || [];
+    const verifierDemoInvoices = new Map([
+      ["inv-001", { verifiedAt: "2026-05-08T09:32:00.000Z", blockchainSubmitter: true }],
+      ["inv-002", { verifiedAt: "2026-05-05T09:20:00.000Z" }],
+      ["inv-003", { verifiedAt: "2026-05-04T10:20:00.000Z" }],
+    ]);
     db.invoices.forEach((invoice) => {
-      const paymentHistory = normalizePaymentEntries(invoice.paymentHistory);
+      const verifierDemo = verifierDemoInvoices.get(invoice.id);
+      if (verifierDemo && invoice.verifiedBy !== verifierProfile.id) {
+        invoice.verifiedBy = verifierProfile.id;
+        invoice.verifiedAt = verifierDemo.verifiedAt;
+        if (verifierDemo.blockchainSubmitter && invoice.blockchain) {
+          invoice.blockchain.submittedBy = verifierProfile.id;
+        }
+        needsPersist = true;
+      }
+      const paymentHistory = normalizePaymentEntries(invoice.paymentHistory).map((entry, index) => ({
+        ...entry,
+        journalNo: entry.journalNo || (index === 0 ? invoice.journalNo : ""),
+      }));
+      if (!paymentHistory.length && toAmount(invoice.amountReceived) > 0) {
+        const recorder = db.users.find((user) => user.id === (invoice.verifiedBy || invoice.enteredBy));
+        paymentHistory.push(buildPaymentEntry({
+          journalNo: invoice.journalNo,
+          amount: invoice.amountReceived,
+          paymentSender: invoice.paymentSender,
+          paymentMethod: invoice.paymentMethod,
+          paymentReference: invoice.paymentReference,
+          paymentDate: invoice.paymentDate,
+          verificationRemarks: invoice.verificationRemarks,
+          recordedAt: invoice.verifiedAt || invoice.updatedAt || invoice.createdAt,
+        }, recorder));
+      }
       const amountReceived = paymentHistory.length ? sumPaymentEntries(paymentHistory) : toAmount(invoice.amountReceived);
       const paymentStatus = calculatePaymentStatus(invoice.invoiceAmount, amountReceived);
       if (invoice.amountReceived !== amountReceived) {
@@ -628,8 +683,9 @@ export const initStore = async () => {
         invoice.paymentStatus = paymentStatus;
         needsPersist = true;
       }
-      if (paymentHistory.length) {
+      if (paymentHistory.length && JSON.stringify(invoice.paymentHistory || []) !== JSON.stringify(paymentHistory)) {
         invoice.paymentHistory = paymentHistory;
+        needsPersist = true;
       }
     });
     db.auditLogs = db.auditLogs || [];
@@ -654,15 +710,15 @@ export const getStorageInfo = () => ({
 });
 
 export const findUserByEmail = (email) =>
-  db.users.find((user) => !["auditor", "verifier"].includes(user.role) && user.email.toLowerCase() === String(email || "").toLowerCase());
+  db.users.find((user) => user.role !== "auditor" && user.email.toLowerCase() === String(email || "").toLowerCase());
 
 export const findUserById = (id) => db.users.find((user) => user.id === id);
 
 export const publicUser = sanitizeUser;
 
-export const listUsers = () => db.users.filter((user) => !["auditor", "verifier"].includes(user.role)).map(sanitizeUser);
+export const listUsers = () => db.users.filter((user) => user.role !== "auditor").map(sanitizeUser);
 
-const activeUsers = () => db.users.filter((user) => user.active !== false && !["auditor", "verifier"].includes(user.role));
+const activeUsers = () => db.users.filter((user) => user.active !== false && user.role !== "auditor");
 
 export const listNotificationRecipients = (actor) => {
   const users = activeUsers().filter((user) => user.id !== actor.id);
@@ -671,9 +727,16 @@ export const listNotificationRecipients = (actor) => {
       groups: [
         { id: "all", label: "All Staff" },
         { id: "role:employee", label: "All Employees" },
+        { id: "role:verifier", label: "All Verifiers" },
         { id: "role:admin", label: "All Admins" },
       ],
       users: users.map(sanitizeUser),
+    };
+  }
+  if (actor.role === "verifier") {
+    return {
+      groups: [{ id: "role:employee", label: "All Employees" }],
+      users: users.filter((user) => user.role === "employee").map(sanitizeUser),
     };
   }
   return { groups: [], users: [] };
@@ -682,6 +745,7 @@ export const listNotificationRecipients = (actor) => {
 const canSendNotificationTo = (actor, recipient) => {
   if (!recipient || recipient.id === actor.id || recipient.active === false) return false;
   if (["super_admin", "admin"].includes(actor.role)) return true;
+  if (actor.role === "verifier") return recipient.role === "employee";
   return false;
 };
 
@@ -839,7 +903,7 @@ const makeHttpError = (message, status = 400) => {
 const normalizeManagedRole = (role = "employee") => {
   const normalized = String(role || "employee").toLowerCase();
   if (!managedRoles.includes(normalized)) {
-    throw makeHttpError("Choose Employee or Admin as the account role.");
+    throw makeHttpError("Choose Employee, Verifier, or Admin as the account role.");
   }
   return normalized;
 };
@@ -877,7 +941,7 @@ const buildAvatar = (name) =>
   `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(name || "CountTale")}&backgroundColor=e2e8f0`;
 
 const generateWorkId = (role) => {
-  const roleCode = { admin: "ADM", employee: "EMP" }[role] || "USR";
+  const roleCode = { admin: "ADM", verifier: "VER", employee: "EMP" }[role] || "USR";
   const sequence = String(db.users.length + 1).padStart(3, "0");
   return `CT-${sequence}-${roleCode}`;
 };
@@ -1572,7 +1636,7 @@ export const getEmployeeActivityReport = (filters = {}) => {
   };
 };
 
-const canReadAll = (user) => ["admin", "super_admin"].includes(user.role);
+const canReadAll = (user) => ["verifier", "admin", "super_admin"].includes(user.role);
 
 export const listInvoices = (user, filters = {}) => {
   const q = String(filters.q || "").trim().toLowerCase();
@@ -1624,9 +1688,13 @@ export const getInvoiceById = (id, user) => {
 export const journalExists = (journalNo, excludeId = "") => {
   const normalized = String(journalNo || "").trim().toLowerCase();
   if (!normalized) return false;
-  return db.invoices.some(
-    (invoice) => invoice.id !== excludeId && String(invoice.journalNo || "").trim().toLowerCase() === normalized,
-  );
+  return db.invoices.some((invoice) => {
+    if (invoice.id === excludeId) return false;
+    if (String(invoice.journalNo || "").trim().toLowerCase() === normalized) return true;
+    return normalizePaymentEntries(invoice.paymentHistory).some(
+      (entry) => entry.journalNo.toLowerCase() === normalized,
+    );
+  });
 };
 
 const validateInvoicePayload = (payload) => {
@@ -1664,11 +1732,22 @@ export const createInvoice = async (payload, actor, context = {}) => {
   }
 
   const invoiceAmount = toAmount(payload.invoiceAmount);
-  const paymentHistory = normalizePaymentEntries(payload.paymentHistory || payload.paymentEntries).map((entry) => ({
+  const paymentHistory = normalizePaymentEntries(payload.paymentHistory || payload.paymentEntries).map((entry, index) => ({
     ...entry,
+    journalNo: entry.journalNo || (index === 0 ? payload.journalNo.trim() : ""),
     recordedBy: entry.recordedBy || actor.id,
     recordedByName: entry.recordedByName || actor.name,
   }));
+  const submittedPaymentJournals = paymentHistory.map((entry) => entry.journalNo.toLowerCase()).filter(Boolean);
+  if (new Set(submittedPaymentJournals).size !== submittedPaymentJournals.length) {
+    throw makeHttpError("Each payment must use a unique journal number.", 409);
+  }
+  const conflictingPaymentJournal = paymentHistory.find(
+    (entry) => entry.journalNo && entry.journalNo.toLowerCase() !== payload.journalNo.trim().toLowerCase() && journalExists(entry.journalNo),
+  );
+  if (conflictingPaymentJournal) {
+    throw makeHttpError(`Payment journal ${conflictingPaymentJournal.journalNo} already exists.`, 409);
+  }
   if (!paymentHistory.length && toAmount(payload.amountReceived) > 0) {
     paymentHistory.push(buildPaymentEntry(payload, actor));
   }
@@ -1785,7 +1864,7 @@ export const updateInvoice = async (id, payload, actor, context = {}) => {
   const invoice = db.invoices.find((item) => item.id === id);
   if (!invoice) return null;
   const canCorrectInvoice =
-    ["admin", "super_admin"].includes(actor.role) ||
+    ["verifier", "admin", "super_admin"].includes(actor.role) ||
     invoice.enteredBy === actor.id;
   if (!canCorrectInvoice) throw makeHttpError("You can only edit your own records unless you are an administrator.", 403);
   if (payload.journalNo && journalExists(payload.journalNo, id)) {
@@ -2013,16 +2092,42 @@ export const updatePaymentStatus = async (id, payload, actor, context = {}) => {
   const incomingPaymentEntry = payload.recordPartPayment || payload.paymentEntry
     ? buildPaymentEntry(payload.paymentEntry || payload, actor)
     : null;
+  if (requestedStatus === "Unpaid" && (currentPaymentHistory.length || toAmount(invoice.amountReceived) > 0)) {
+    const error = new Error("This invoice already has recorded payments. Payment journals cannot be erased; add the remaining payment or submit a correction.");
+    error.status = 409;
+    throw error;
+  }
   if (incomingPaymentEntry && incomingPaymentEntry.amount <= 0) {
     const error = new Error("Part payment amount must be greater than zero.");
     error.status = 400;
     throw error;
   }
-  const nextPaymentHistory = incomingPaymentEntry
-    ? [...currentPaymentHistory, incomingPaymentEntry]
-    : payload.paymentHistory
-      ? normalizePaymentEntries(payload.paymentHistory)
-      : currentPaymentHistory;
+  if (incomingPaymentEntry && !incomingPaymentEntry.journalNo) {
+    const error = new Error("A new payment journal number is required for every payment received.");
+    error.status = 400;
+    throw error;
+  }
+  if (incomingPaymentEntry && journalExists(incomingPaymentEntry.journalNo)) {
+    const error = new Error("Payment journal number already exists. Enter a unique journal number for this payment.");
+    error.status = 409;
+    throw error;
+  }
+  const currentAmountReceived = currentPaymentHistory.length
+    ? sumPaymentEntries(currentPaymentHistory)
+    : toAmount(invoice.amountReceived);
+  const outstandingBalance = Math.max(0, toAmount(invoice.invoiceAmount) - currentAmountReceived);
+  if (incomingPaymentEntry && incomingPaymentEntry.amount > outstandingBalance) {
+    const error = new Error(`Payment amount cannot exceed the outstanding balance of ${outstandingBalance}.`);
+    error.status = 400;
+    throw error;
+  }
+  const nextPaymentHistory = requestedStatus === "Unpaid"
+    ? []
+    : incomingPaymentEntry
+      ? [...currentPaymentHistory, incomingPaymentEntry]
+      : payload.paymentHistory
+        ? normalizePaymentEntries(payload.paymentHistory)
+        : currentPaymentHistory;
   const nextAmountReceived = incomingPaymentEntry || payload.paymentHistory
     ? sumPaymentEntries(nextPaymentHistory)
     : toAmount(
@@ -2053,17 +2158,11 @@ export const updatePaymentStatus = async (id, payload, actor, context = {}) => {
   }
   if (isBlockchainLocked(invoice)) {
     const revisionPayload = { ...payload, paymentStatus: status, amountReceived: nextAmountReceived, paymentHistory: nextPaymentHistory };
-    if (payload.journalNo && payload.journalNo !== invoice.journalNo && journalExists(payload.journalNo, id)) {
-      const error = new Error("Journal number already exists.");
-      error.status = 409;
-      throw error;
-    }
     const { invoice: lockedInvoice } = await createLockedRecordRevision(invoice, revisionPayload, actor, context, {
       correctionType: "Payment Revision",
       sourceAction: status === "Paid" ? "PAYMENT_VERIFIED" : "PAYMENT_STATUS_UPDATED",
       fields: [
         "paymentStatus",
-        "journalNo",
         "paymentSender",
         "paymentMethod",
         "paymentReference",
@@ -2076,14 +2175,6 @@ export const updatePaymentStatus = async (id, payload, actor, context = {}) => {
     });
     return lockedInvoice;
   }
-  if (payload.journalNo && payload.journalNo !== invoice.journalNo) {
-    if (journalExists(payload.journalNo, id)) {
-      const error = new Error("Journal number already exists.");
-      error.status = 409;
-      throw error;
-    }
-    invoice.journalNo = payload.journalNo.trim();
-  }
 
   invoice.paymentStatus = status;
   invoice.paymentSender = payload.paymentSender ?? invoice.paymentSender;
@@ -2091,7 +2182,11 @@ export const updatePaymentStatus = async (id, payload, actor, context = {}) => {
   invoice.paymentReference = payload.paymentReference ?? invoice.paymentReference;
   invoice.paymentDate = payload.paymentDate ?? invoice.paymentDate;
   invoice.amountReceived = nextAmountReceived;
-  invoice.paymentHistory = nextPaymentHistory.length ? nextPaymentHistory : invoice.paymentHistory || [];
+  invoice.paymentHistory = requestedStatus === "Unpaid"
+    ? []
+    : nextPaymentHistory.length
+      ? nextPaymentHistory
+      : invoice.paymentHistory || [];
   invoice.verificationRemarks = payload.verificationRemarks ?? invoice.verificationRemarks;
   invoice.bank = payload.bank ?? invoice.bank;
   invoice.verifiedBy = actor.id;

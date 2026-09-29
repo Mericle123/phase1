@@ -68,14 +68,14 @@ const navItems = [
     label: "Client Directory",
     view: "directory",
     activeViews: ["directory", "details", "report"],
-    roles: ["employee"],
+    roles: ["employee", "verifier"],
   },
   {
     icon: CreditCard,
     label: "Payment Verification",
     view: "payments",
     activeViews: ["payments"],
-    roles: ["admin", "super_admin"],
+    roles: ["verifier", "admin", "super_admin"],
   },
   {
     icon: BarChart3,
@@ -192,7 +192,7 @@ export function Sidebar({ view = "directory", setView, isOpen, isCollapsed = fal
             <NavItem
               key={item.view}
               icon={item.icon}
-              label={item.label}
+              label={user?.role === "verifier" && item.view === "directory" ? "Verifier Dashboard" : item.label}
               active={item.activeViews.includes(view)}
               onClick={() => handleNavClick(item.view)}
               isOpen={!isCollapsed}

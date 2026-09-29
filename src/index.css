@@ -1733,6 +1733,67 @@ html.dark .revert-dark {
   }
 }
 
+/* Payment workspace: stable, compact, and fully visible at every viewport. */
+.payment-workspace-backdrop {
+  align-items: center !important;
+  overflow: hidden !important;
+  padding: 1rem !important;
+}
+
+.payment-status-modal {
+  width: min(48rem, calc(100vw - 2rem)) !important;
+  max-width: 48rem !important;
+  max-height: min(44rem, calc(100dvh - 2rem)) !important;
+  border-radius: 12px !important;
+}
+
+.payment-entry-modal {
+  width: min(56rem, calc(100vw - 2rem)) !important;
+  max-width: 56rem !important;
+  height: min(46rem, calc(100dvh - 2rem)) !important;
+  max-height: calc(100dvh - 2rem) !important;
+  border-radius: 12px !important;
+}
+
+.payment-status-modal .ui-modal-footer,
+.payment-entry-modal .ui-modal-footer {
+  background: #ffffff !important;
+}
+
+.payment-field-label {
+  display: block;
+  color: #64748b;
+  font-size: 0.6875rem;
+  font-weight: 800;
+  letter-spacing: 0;
+  line-height: 1rem;
+  text-transform: uppercase;
+}
+
+@media (max-width: 640px) {
+  .payment-workspace-backdrop {
+    align-items: stretch !important;
+    padding: 0.5rem !important;
+  }
+
+  .payment-status-modal,
+  .payment-entry-modal {
+    width: calc(100vw - 1rem) !important;
+    height: calc(100dvh - 1rem) !important;
+    max-height: calc(100dvh - 1rem) !important;
+  }
+
+  .payment-status-modal .ui-modal-header,
+  .payment-entry-modal .ui-modal-header {
+    padding: 0.875rem 1rem;
+  }
+
+  .payment-status-modal .ui-modal-footer,
+  .payment-entry-modal .ui-modal-footer {
+    padding: 0.75rem 1rem;
+  }
+}
+
 /* CountTale redesign pass */
 :root {
   --ct-paper: #ffffff;

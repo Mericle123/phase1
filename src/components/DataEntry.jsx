@@ -27,7 +27,7 @@ import BOBLogo from "../assets/BOB.png";
 import BDBLLogo from "../assets/BDBL.png";
 import BNBLogo from "../assets/BNB.png";
 import TBankLogo from "../assets/T-Bank.jpg";
-import DigitalKiduLogo from "../assets/DIgital kidu.png";
+import DigitalKiduLogo from "../assets/Digital-Kidu.png";
 import NZBritanniaMark from "../assets/nz-britannia-mark.png";
 
 const bankOptions = [
@@ -261,10 +261,10 @@ const FormTextarea = ({ value, onChange, onFocus, onBlur, placeholder, rows = 3 
 );
 
 
-export function DataEntry({ onBack, onAddClient, clients = [] }) {
-  const activeDraftId = useRef(null);
+export function DataEntry({ onBack, onAddClient, clients = [], draftToLoad = null }) {
+  const activeDraftId = useRef(draftToLoad?.id || null);
 
-  const [formData, setFormData] = useState({
+  const [formData, setFormData] = useState(() => ({
     clientName: "",
     entityType: "",
     citizenship: "",
@@ -316,9 +316,11 @@ export function DataEntry({ onBack, onAddClient, clients = [] }) {
     amountReceived: "",
     paymentEntries: [],
     paymentDate: "",
-    verificationRemarks: ""
-  });
+    verificationRemarks: "",
+    ...(draftToLoad?.formData || {}),
+  }));
   const [partPaymentDraft, setPartPaymentDraft] = useState({
+    journalNo: "",
     amount: "",
     sender: "",
     method: "Bank Transfer",
@@ -564,9 +566,28 @@ export function DataEntry({ onBack, onAddClient, clients = [] }) {
     return "Not recovered";
   })();
 
-  const addPartPayment = () => {
+  const addPartPayment = async () => {
     const amount = numericValue(partPaymentDraft.amount);
     const currentTotal = sumPartPayments();
+    const paymentJournal = partPaymentDraft.journalNo.trim();
+    if (!paymentJournal) {
+      toast.error("Payment Journal Required", { description: "Every payment must have its own journal number." });
+      return;
+    }
+    if (formData.paymentEntries.some((entry) => entry.journalNo?.trim().toLowerCase() === paymentJournal.toLowerCase())) {
+      toast.error("Duplicate Payment Journal", { description: "Use a different journal number for this payment." });
+      return;
+    }
+    try {
+      const result = await api.checkJournal(paymentJournal);
+      if (result.exists) {
+        toast.error("Payment Journal Already Exists", { description: "Use a unique journal number for this payment." });
+        return;
+      }
+    } catch (error) {
+      toast.error("Journal Check Failed", { description: error.message });
+      return;
+    }
     if (amount <= 0) {
       toast.error("Payment Amount Required", { description: "Enter a part payment amount greater than zero." });
       return;
@@ -587,9 +608,11 @@ export function DataEntry({ onBack, onAddClient, clients = [] }) {
     }
     const nextEntry = {
       id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+      journalNo: paymentJournal,
       amount,
       sender: partPaymentDraft.sender.trim() || formData.paymentSender.trim(),
       method: partPaymentDraft.method || formData.paymentMethod || "Bank Transfer",
+      bank: (partPaymentDraft.method || formData.paymentMethod || "Bank Transfer") === "Bank Transfer" ? formData.bank : "",
       reference: partPaymentDraft.reference.trim(),
       date: partPaymentDraft.date || formData.paymentDate || new Date().toISOString().slice(0, 10),
       remarks: partPaymentDraft.remarks.trim(),
@@ -608,6 +631,7 @@ export function DataEntry({ onBack, onAddClient, clients = [] }) {
     });
     setPartPaymentDraft((prev) => ({
       ...prev,
+      journalNo: "",
       amount: "",
       reference: "",
       remarks: "",
@@ -842,6 +866,10 @@ export function DataEntry({ onBack, onAddClient, clients = [] }) {
           debtPercent: (100 - val).toString()
         }));
       } else if (field === "analysisPeriod") {
+        if (!numericValue) {
+          setFormData(prev => ({ ...prev, analysisPeriod: "" }));
+          return;
+        }
         const periodCount = Math.max(1, Math.min(20, parseInt(numericValue, 10) || 1));
         setFormData(prev => {
           const nextPeriods = createCashFlowPeriods(periodCount).map((row, index) => prev.cashFlowPeriods[index] || row);
@@ -1479,7 +1507,7 @@ export function DataEntry({ onBack, onAddClient, clients = [] }) {
                   <FormInput value={formData.invoiceAmount} onChange={(e) => handleInputChange("invoiceAmount", e.target.value)} onFocus={() => handleFocus("costs")} onBlur={handleBlur} placeholder="0.00" prefix={currencyPrefix} />
                 </InputGroup>
                 <InputGroup label="Currency" description="Invoice currency">
-                  <FormSelect value={formData.currency} onChange={(e) => handleInputChange("currency", e.target.value)} onFocus={() => handleFocus("costs")} onBlur={handleBlur} placeholder="Select currency..." options={["BTN", "NZD", "INR", "EUR", "KWD"]} />
+                  <FormSelect value={formData.currency} onChange={(e) => handleInputChange("currency", e.target.value)} onFocus={() => handleFocus("costs")} onBlur={handleBlur} placeholder="Select currency..." options={["BTN"]} />
                 </InputGroup>
                 <InputGroup label="Financial Institution" description="Choose the bank/logo for this invoice" className="sm:col-span-2">
                   <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-5">
@@ -1489,18 +1517,23 @@ export function DataEntry({ onBack, onAddClient, clients = [] }) {
                         <button
                           key={bank.name}
                           type="button"
+                          aria-pressed={selected}
                           onClick={() => handleInputChange("bank", bank.name)}
                           className={cn(
-                            "flex min-h-20 flex-col items-center justify-center gap-2 rounded-2xl border bg-white/70 px-3 py-3 text-center text-[10px] font-black text-slate-600 transition-all",
-                            selected ? "border-blue-400 ring-4 ring-blue-500/10 text-blue-700 shadow-sm" : "border-slate-100 hover:border-blue-100 hover:bg-blue-50/70",
+                            "financial-institution-option",
+                            selected && "is-selected",
                           )}
                         >
-                          <img src={bank.logo} alt={bank.name} className="h-7 max-w-20 object-contain" />
-                          <span>{bank.name}</span>
+                          {selected && <span className="financial-institution-check"><Check size={12} /> Selected</span>}
+                          <img src={bank.logo} alt={bank.name} />
+                          <span className="financial-institution-name">{bank.name}</span>
                         </button>
                       );
                     })}
                   </div>
+                  <p className={cn("financial-institution-current", formData.bank && "has-selection")}>
+                    {formData.bank ? `${formData.bank} selected` : "No financial institution selected"}
+                  </p>
                 </InputGroup>
                 <InputGroup label="Description" description="Invoice purpose or reference" className="sm:col-span-2">
                   <FormTextarea value={formData.description} onChange={(e) => handleInputChange("description", e.target.value)} onFocus={() => handleFocus("costs")} onBlur={handleBlur} placeholder="Enter invoice description..." rows={2} />
@@ -1772,7 +1805,16 @@ export function DataEntry({ onBack, onAddClient, clients = [] }) {
                       {formData.paymentEntries.length} recorded
                     </span>
                   </div>
-                  <div className="grid grid-cols-1 gap-3 md:grid-cols-6">
+                  <div className="grid grid-cols-1 gap-3 md:grid-cols-8">
+                    <input
+                      type="text"
+                      value={partPaymentDraft.journalNo}
+                      onChange={(event) => setPartPaymentDraft((prev) => ({ ...prev, journalNo: event.target.value }))}
+                      onFocus={() => handleFocus("payment")}
+                      onBlur={handleBlur}
+                      placeholder="Payment journal"
+                      className="premium-input rounded-2xl px-4 py-3 text-sm outline-none md:col-span-2"
+                    />
                     <input
                       type="text"
                       value={partPaymentDraft.amount}
@@ -1821,7 +1863,7 @@ export function DataEntry({ onBack, onAddClient, clients = [] }) {
                       onFocus={() => handleFocus("payment")}
                       onBlur={handleBlur}
                       placeholder="Sender name"
-                      className="premium-input rounded-2xl px-4 py-3 text-sm outline-none md:col-span-3"
+                      className="premium-input rounded-2xl px-4 py-3 text-sm outline-none md:col-span-4"
                     />
                     <input
                       type="text"
@@ -1830,18 +1872,20 @@ export function DataEntry({ onBack, onAddClient, clients = [] }) {
                       onFocus={() => handleFocus("payment")}
                       onBlur={handleBlur}
                       placeholder="Optional note"
-                      className="premium-input rounded-2xl px-4 py-3 text-sm outline-none md:col-span-3"
+                      className="premium-input rounded-2xl px-4 py-3 text-sm outline-none md:col-span-4"
                     />
                   </div>
                   {formData.paymentEntries.length > 0 && (
                     <div className="mt-4 overflow-hidden rounded-2xl border border-slate-100">
-                      <div className="grid grid-cols-[1fr_auto_auto] gap-3 bg-slate-50 px-4 py-2 text-[10px] font-black uppercase tracking-widest text-slate-400">
+                      <div className="grid grid-cols-[0.8fr_1fr_auto_auto] gap-3 bg-slate-50 px-4 py-2 text-[10px] font-black uppercase tracking-widest text-slate-400">
+                        <span>Journal</span>
                         <span>Reference</span>
                         <span>Amount</span>
                         <span>Action</span>
                       </div>
                       {formData.paymentEntries.map((entry) => (
-                        <div key={entry.id} className="grid grid-cols-[1fr_auto_auto] items-center gap-3 border-t border-slate-100 px-4 py-3 text-xs">
+                        <div key={entry.id} className="grid grid-cols-[0.8fr_1fr_auto_auto] items-center gap-3 border-t border-slate-100 px-4 py-3 text-xs">
+                          <p className="truncate font-mono font-black text-slate-900">{entry.journalNo}</p>
                           <div className="min-w-0">
                             <p className="truncate font-black text-slate-900">{entry.reference}</p>
                             <p className="mt-1 text-[10px] font-bold uppercase tracking-widest text-slate-400">{entry.date || "No date"} / {entry.method}</p>
@@ -2114,6 +2158,7 @@ export function DataEntry({ onBack, onAddClient, clients = [] }) {
                 paymentChoice: "No Payment", paymentStatus: "Unpaid", bank: "", paymentSender: "", paymentMethod: "", paymentReference: "", amountReceived: "", paymentEntries: [], paymentDate: "", verificationRemarks: ""
               });
               setPartPaymentDraft({
+                journalNo: "",
                 amount: "",
                 sender: "",
                 method: "Bank Transfer",

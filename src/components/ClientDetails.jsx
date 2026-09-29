@@ -246,22 +246,26 @@ export function ClientDetails({ client, onBack, onViewReport }) {
             <DetailField label="Amount Received" value={client.amountReceived ? money(client, client.amountReceived) : ""} />
             <DetailField label="Payment Date" value={client.paymentDate} />
             {client.paymentHistory?.length > 0 && (
-              <div className="md:col-span-2 overflow-hidden rounded-2xl border border-slate-100 bg-white/70">
-                <div className="grid grid-cols-[1fr_auto_auto] gap-3 bg-slate-50 px-4 py-3 text-[10px] font-black uppercase tracking-widest text-slate-400">
-                  <span>Part Payment</span>
-                  <span>Amount</span>
-                  <span>Date</span>
-                </div>
-                {client.paymentHistory.map((entry) => (
-                  <div key={entry.id || `${entry.reference}-${entry.date}`} className="grid grid-cols-[1fr_auto_auto] items-center gap-3 border-t border-slate-100 px-4 py-3 text-xs">
-                    <div className="min-w-0">
-                      <p className="truncate font-black text-slate-900">{entry.reference || "No reference"}</p>
-                      <p className="mt-1 text-[10px] font-bold uppercase tracking-widest text-slate-400">{entry.method || "Payment"} / {entry.sender || "Sender not provided"}</p>
-                    </div>
-                    <p className="font-mono font-black text-slate-900">{money(client, entry.amount)}</p>
-                    <p className="font-bold text-slate-500">{entry.date || "-"}</p>
+              <div className="md:col-span-2 overflow-x-auto rounded-2xl border border-slate-100 bg-white/70">
+                <div className="min-w-[38rem]">
+                  <div className="grid grid-cols-[0.8fr_1.3fr_auto_auto] gap-3 bg-slate-50 px-4 py-3 text-[10px] font-black uppercase tracking-widest text-slate-400">
+                    <span>Payment Journal</span>
+                    <span>Payment Evidence</span>
+                    <span>Amount</span>
+                    <span>Date</span>
                   </div>
-                ))}
+                  {client.paymentHistory.map((entry) => (
+                    <div key={entry.id || `${entry.reference}-${entry.date}`} className="grid grid-cols-[0.8fr_1.3fr_auto_auto] items-center gap-3 border-t border-slate-100 px-4 py-3 text-xs">
+                      <p className="truncate font-mono font-black text-slate-900">{entry.journalNo || "Legacy entry"}</p>
+                      <div className="min-w-0">
+                        <p className="truncate font-black text-slate-900">{entry.reference || "No reference"}</p>
+                        <p className="mt-1 text-[10px] font-bold uppercase tracking-widest text-slate-400">{entry.method || "Payment"} / {entry.sender || "Sender not provided"}</p>
+                      </div>
+                      <p className="font-mono font-black text-slate-900">{money(client, entry.amount)}</p>
+                      <p className="font-bold text-slate-500">{entry.date || "-"}</p>
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
             <DetailField label="Admin Audit Notes" value={client.adminReviewRemarks || client.auditNotes} fullWidth />

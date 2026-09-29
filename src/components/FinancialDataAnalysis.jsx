@@ -34,7 +34,7 @@ const toNumber = (value, fallback = 0) => {
 };
 
 const currency = (value, code = "BTN") => {
-  const label = code === "BTN" ? "Nu." : code;
+  const label = code === "BTN" ? "BTN" : code;
   return `${label} ${Math.round(value || 0).toLocaleString()}`;
 };
 

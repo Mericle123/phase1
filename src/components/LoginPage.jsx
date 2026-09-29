@@ -2,21 +2,19 @@ import { useState } from "react";
 import {
   AlertCircle,
   ArrowRight,
-  CheckCircle2,
   Eye,
   EyeOff,
   LockKeyhole,
   Mail,
-  ShieldCheck,
 } from "lucide-react";
 import { cn } from "../lib/utils";
 import { TaskLoader } from "./TaskLoader";
 import NZBritanniaLogo from "../assets/nz-britannia-logo.png";
-import { BrandRail } from "./BrandRail";
 
 const demoAccounts = [
   { label: "Super Admin", role: "Owner Access", email: "ngawangg927@gmail.com", password: "Admin@123" },
   { label: "Admin", role: "Control Center", email: "admin@counttale.bt", password: "Admin@123" },
+  { label: "Verifier", role: "Payment Review", email: "verifier@counttale.bt", password: "Verifier@123" },
   { label: "Employee", role: "Data Entry", email: "employee@counttale.bt", password: "Employee@123" },
 ];
 
@@ -29,7 +27,6 @@ export function LoginPage({ onLogin, isLoading }) {
   const [fieldErrors, setFieldErrors] = useState({});
   const [showPassword, setShowPassword] = useState(false);
   const [focusedField, setFocusedField] = useState("");
-
   const selectedAccount = demoAccounts.find((account) => account.email === email);
 
   const validate = () => {
@@ -61,67 +58,16 @@ export function LoginPage({ onLogin, isLoading }) {
 
   return (
     <div className="login-shell min-h-screen text-slate-900">
-      <div className="login-grid-layer" aria-hidden="true" />
-      <div className="login-ribbon login-ribbon-a" aria-hidden="true" />
-      <div className="login-ribbon login-ribbon-b" aria-hidden="true" />
-
-      <main className="login-page-shell relative z-10 mx-auto grid min-h-screen w-full max-w-[1180px] items-center gap-6 px-4 py-6 sm:px-6 lg:grid-cols-[1.05fr_0.82fr] lg:px-8">
-        <section className="login-story-panel hidden min-h-[42rem] flex-col justify-between overflow-hidden lg:flex" aria-label="NZ Britannia identity">
-          <div>
-            <div className="login-story-brand">
-              <div className="login-story-logo">
-                <img src={NZBritanniaLogo} alt="NZ Britannia — Retire Better" />
-              </div>
-            </div>
-            <h2 className="mt-8 text-4xl font-black tracking-tight text-white">Control today. Retire better.</h2>
-            <p className="mt-6 max-w-md text-sm font-medium leading-7 text-white/68">
-              A controlled workspace for invoice entry, payment verification, record ownership, and trusted financial traceability.
-            </p>
-          </div>
-
-          <div className="login-story-ledger">
-            {[
-              ["Entry", "Who recorded it"],
-              ["Verify", "What was checked"],
-              ["Payment", "What is still due"],
-              ["Trace", "What can be trusted"],
-            ].map(([label, detail], index) => (
-              <div key={label} className="login-story-step">
-                <span>{String(index + 1).padStart(2, "0")}</span>
-                <div>
-                  <p>{label}</p>
-                  <small>{detail}</small>
-                </div>
-              </div>
-            ))}
-          </div>
-
-          <div className="login-story-proof">
-            <div className="flex items-center gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-white/10 text-[var(--ct-gold)]">
-                <ShieldCheck size={19} />
-              </div>
-              <div>
-                <p className="text-sm font-black text-white">Secure financial record</p>
-                <p className="text-xs font-medium text-white/58">Entries, payments, and corrections remain accountable.</p>
-              </div>
-            </div>
-            <CheckCircle2 className="text-[var(--ct-gold)]" size={22} />
-          </div>
-        </section>
-
+      <main className="login-page-shell relative z-10 mx-auto flex min-h-screen w-full items-center justify-center px-4 py-8 sm:px-6">
         <form onSubmit={submit} className="login-card h-fit" noValidate aria-busy={isLoading}>
-          <div className="mb-7 text-center">
+          <div className="mb-8 text-center">
             <div className="login-brand-mark">
               <img src={NZBritanniaLogo} alt="NZ Britannia — Retire Better" />
             </div>
             <div className="mt-5">
               <h1 className="text-3xl font-black tracking-tight text-slate-950">Login</h1>
-              <p className="mt-2 text-sm font-semibold leading-6 text-slate-500">Secure access to your financial workspace.</p>
             </div>
           </div>
-
-          <BrandRail className="login-brand-rail" />
 
           <div className="space-y-5">
             <div>
@@ -233,8 +179,8 @@ export function LoginPage({ onLogin, isLoading }) {
             )}
           </button>
 
-          <fieldset className="mt-6">
-            <legend className="mb-3 text-[10px] font-black uppercase text-slate-500">Role Access</legend>
+          <fieldset className="mt-6 border-t border-slate-200 pt-5">
+            <legend className="px-2 text-[11px] font-bold text-slate-500">Quick login</legend>
             <div className="grid grid-cols-2 gap-2.5">
               {demoAccounts.map((account) => {
                 const isSelected = selectedAccount?.email === account.email;

@@ -140,6 +140,7 @@ try {
     const accounts = [
       ["superAdmin", "ngawangg927@gmail.com", "Admin@123", "super_admin"],
       ["admin", "admin@counttale.bt", "Admin@123", "admin"],
+      ["verifier", "verifier@counttale.bt", "Verifier@123", "verifier"],
       ["employee", "employee@counttale.bt", "Employee@123", "employee"],
     ];
     for (const [role, email, password, expectedRole] of accounts) {
@@ -152,8 +153,7 @@ try {
       expect(me.payload.user?.role === expectedRole, `${role} /auth/me returned wrong user`);
     }
     await login("auditor@counttale.bt", "Auditor@123", 401);
-    await login("verifier@counttale.bt", "Verifier@123", 401);
-    return "super admin, admin, employee";
+    return "super admin, admin, verifier, employee";
   });
 
   await check("Role-based access rules are enforced", async () => {
@@ -168,10 +168,23 @@ try {
     expect(employeeUsers.response.status === 403, "Employee should not access user management");
     const employeeActivity = await request("/employee-activity", { token: sessions.employee.token });
     expect(employeeActivity.response.status === 403, "Employee should not access activity monitoring");
+    const verifierUsers = await request("/users", { token: sessions.verifier.token });
+    expect(verifierUsers.response.status === 403, "Verifier should not access user management");
+    const verifierActivity = await request("/employee-activity", { token: sessions.verifier.token });
+    expect(verifierActivity.response.status === 403, "Verifier should not access employee activity monitoring");
+    const verifierInvoices = await request("/invoices", { token: sessions.verifier.token });
+    expect(verifierInvoices.response.ok, "Verifier should see the full invoice ledger");
+    expect(
+      ["Paid", "Partially Paid", "Unpaid"].every((status) =>
+        verifierInvoices.payload.invoices.some((invoice) => invoice.paymentStatus === status),
+      ),
+      "Verifier dashboard should include one record for each payment state",
+    );
     const adminUsers = await request("/users", { token: sessions.admin.token });
-    expect(adminUsers.response.ok && adminUsers.payload.users.length >= 3, "Admin should load users");
+    expect(adminUsers.response.ok && adminUsers.payload.users.length >= 4, "Admin should load users including Verifier");
+    expect(adminUsers.payload.users.some((user) => user.role === "verifier"), "Verifier account should be listed");
     expect(!adminUsers.payload.users.some((user) => user.role === "auditor"), "Auditor accounts should not be listed");
-    return "employee entry only, admin supervision only";
+    return "employee entry, verifier payment control, admin supervision";
   });
 
   await check("Input validation and duplicate journal checks work", async () => {
@@ -241,17 +254,17 @@ try {
     return "all dashboard fields present";
   });
 
-  await check("Administrator and original employee can correct unlocked records", async () => {
-    const adminEdit = await request(`/invoices/${createdInvoice.id}`, {
+  await check("Verifier and original employee can correct unlocked records", async () => {
+    const verifierEdit = await request(`/invoices/${createdInvoice.id}`, {
       method: "PATCH",
-      token: sessions.admin.token,
+      token: sessions.verifier.token,
       body: {
-        description: "Administrator corrected the invoice note.",
-        verificationRemarks: "Administrator reviewed and corrected a data-entry note.",
+        description: "Verifier corrected the invoice note.",
+        verificationRemarks: "Verifier reviewed and corrected a data-entry note.",
       },
     });
-    expect(adminEdit.response.ok, "Administrator should be able to correct invoice records", JSON.stringify(adminEdit.payload));
-    expect(adminEdit.payload.invoice.description.includes("Administrator corrected"), "Administrator correction did not persist");
+    expect(verifierEdit.response.ok, "Verifier should be able to correct invoice records", JSON.stringify(verifierEdit.payload));
+    expect(verifierEdit.payload.invoice.description.includes("Verifier corrected"), "Verifier correction did not persist");
 
     const employeeEdit = await request(`/invoices/${createdInvoice.id}`, {
       method: "PATCH",
@@ -263,7 +276,7 @@ try {
     });
     expect(employeeEdit.response.ok, "Original employee should be able to correct own invoice", JSON.stringify(employeeEdit.payload));
     expect(employeeEdit.payload.invoice.location === "Paro, Bhutan", "Employee correction did not persist");
-    return "administrator correction and employee own-record correction";
+    return "verifier correction and employee own-record correction";
   });
 
   await check("Admin approval, rejection, flagging, and verification update the correct record", async () => {
@@ -290,23 +303,32 @@ try {
   await check("Payment validation, update, and blockchain storage work", async () => {
     const unpaidCommit = await request(`/invoices/${createdInvoice.id}/commit`, {
       method: "POST",
-      token: sessions.admin.token,
+      token: sessions.verifier.token,
     });
     expect(unpaidCommit.response.status === 400, "Unpaid invoice should not be committed");
 
     const missingPayment = await request(`/invoices/${createdInvoice.id}/status`, {
       method: "PATCH",
-      token: sessions.admin.token,
+      token: sessions.verifier.token,
       body: { paymentStatus: "Paid" },
     });
     expect(missingPayment.response.status === 400, "Paid status should require payment evidence");
 
+    const superAdminStatus = await request(`/invoices/${createdInvoice.id}/status`, {
+      method: "PATCH",
+      token: sessions.superAdmin.token,
+      body: {
+        paymentStatus: "Unpaid",
+        verificationRemarks: "Super Admin confirmed that no payment has been received yet.",
+      },
+    });
+    expect(superAdminStatus.response.ok, "Super Admin status action failed", JSON.stringify(superAdminStatus.payload));
+
     const partial = await request(`/invoices/${createdInvoice.id}/status`, {
       method: "PATCH",
-      token: sessions.admin.token,
+      token: sessions.verifier.token,
       body: {
         paymentStatus: "Partially Paid",
-        journalNo: uniqueJournal,
         bank: "Bank of Bhutan",
         paymentSender: "E2E Demo Trading",
         paymentMethod: "Bank Transfer",
@@ -316,9 +338,11 @@ try {
         verificationRemarks: "E2E partial payment evidence checked.",
         recordPartPayment: true,
         paymentEntry: {
+          journalNo: `${uniqueJournal}-P1`,
           amount: 250000,
           sender: "E2E Demo Trading",
           method: "Bank Transfer",
+          bank: "Bank of Bhutan",
           reference: `PART-${uniqueJournal}`,
           date: "2026-05-30",
           remarks: "First part payment.",
@@ -329,13 +353,25 @@ try {
     expect(partial.payload.invoice.paymentStatus === "Partially Paid", "Payment status was not updated to Partially Paid");
     expect(Number(partial.payload.invoice.amountReceived) === 250000, "Partial payment amount did not persist");
     expect(partial.payload.invoice.paymentHistory?.length >= 1, "Partial payment history missing");
+    expect(partial.payload.invoice.journalNo === uniqueJournal, "Initial invoice journal was replaced by the part payment");
+    expect(partial.payload.invoice.paymentHistory.at(-1)?.journalNo === `${uniqueJournal}-P1`, "Part-payment journal was not added");
+    expect(partial.payload.invoice.paymentHistory.at(-1)?.bank === "Bank of Bhutan", "Payment bank was not preserved on the journal entry");
+
+    const unpaid = await request(`/invoices/${createdInvoice.id}/status`, {
+      method: "PATCH",
+      token: sessions.verifier.token,
+      body: {
+        paymentStatus: "Unpaid",
+        verificationRemarks: "Verifier confirmed that no valid payment remains on this record.",
+      },
+    });
+    expect(unpaid.response.status === 409, "Recorded payment journals must not be erased by No Payment");
 
     const paid = await request(`/invoices/${createdInvoice.id}/status`, {
       method: "PATCH",
-      token: sessions.admin.token,
+      token: sessions.verifier.token,
       body: {
         paymentStatus: "Paid",
-        journalNo: uniqueJournal,
         bank: "Bank of Bhutan",
         paymentSender: "E2E Demo Trading",
         paymentMethod: "Bank Transfer",
@@ -345,9 +381,11 @@ try {
         verificationRemarks: "E2E payment evidence checked.",
         recordPartPayment: true,
         paymentEntry: {
+          journalNo: `${uniqueJournal}-P2`,
           amount: 515432,
           sender: "E2E Demo Trading",
           method: "Bank Transfer",
+          bank: "Bank of Bhutan",
           reference: `PAY-${uniqueJournal}`,
           date: "2026-05-31",
           remarks: "Remaining balance paid.",
@@ -358,10 +396,15 @@ try {
     const invoice = paid.payload.invoice;
     expect(invoice.paymentStatus === "Paid", "Payment status was not updated to Paid");
     expect(Number(invoice.amountReceived) === 765432, "Remaining payment did not settle the full invoice amount");
+    expect(invoice.journalNo === uniqueJournal, "Balance payment replaced the original invoice journal");
+    expect(invoice.paymentHistory?.length === 2, "Balance payment should append a second journal entry");
+    expect(invoice.paymentHistory[0].journalNo === `${uniqueJournal}-P1`, "First payment journal was not preserved");
+    expect(invoice.paymentHistory[1].journalNo === `${uniqueJournal}-P2`, "Balance payment journal was not appended");
+    expect(invoice.paymentHistory[1].bank === "Bank of Bhutan", "Balance-payment bank was not preserved");
     expect(invoice.blockchainStorageStatus === "Stored", "Blockchain storage status not Stored");
     expect(invoice.blockchain?.transactionId?.startsWith("FABRIC-"), "Fabric transaction ID missing");
 
-    const ledger = await request(`/blockchain/${uniqueJournal}`, { token: sessions.admin.token });
+    const ledger = await request(`/blockchain/${uniqueJournal}`, { token: sessions.verifier.token });
     expect(ledger.response.ok, "Ledger query failed", JSON.stringify(ledger.payload));
     expect(ledger.payload.record?.journalNumber === uniqueJournal, "Ledger journal mismatch");
     expect(ledger.payload.record?.transactionId === invoice.blockchain.transactionId, "Ledger transaction mismatch");
@@ -370,7 +413,7 @@ try {
     const originalPaymentReference = invoice.paymentReference;
     const blockedEdit = await request(`/invoices/${createdInvoice.id}/status`, {
       method: "PATCH",
-      token: sessions.admin.token,
+      token: sessions.verifier.token,
       body: {
         paymentStatus: "Paid",
         paymentReference: `PAY-${uniqueJournal}-EDIT`,
@@ -380,7 +423,7 @@ try {
 
     const revision = await request(`/invoices/${createdInvoice.id}/status`, {
       method: "PATCH",
-      token: sessions.admin.token,
+      token: sessions.verifier.token,
       body: {
         paymentStatus: "Paid",
         paymentReference: `PAY-${uniqueJournal}-REVISION`,
@@ -567,12 +610,12 @@ try {
     });
     expect(detailsUpdate.response.ok && detailsUpdate.payload.user.role === "employee", "Details update failed");
 
-    const rejectVerifier = await request(`/users/${createdUser.id}`, {
+    const assignVerifier = await request(`/users/${createdUser.id}`, {
       method: "PATCH",
       token: sessions.admin.token,
       body: { role: "verifier" },
     });
-    expect(rejectVerifier.response.status === 400, "Verifier role should be rejected");
+    expect(assignVerifier.response.ok && assignVerifier.payload.user.role === "verifier", "Verifier role assignment failed");
 
     const rejectAuditor = await request(`/users/${createdUser.id}`, {
       method: "PATCH",
@@ -690,6 +733,17 @@ try {
     });
     expect(employeeSend.response.status === 403, "Employee should not create new notifications");
 
+    const verifierMessage = await request("/notifications", {
+      method: "POST",
+      token: sessions.verifier.token,
+      body: {
+        target: "u-employee",
+        title: "Payment evidence required",
+        message: "Please correct the payment evidence for verification.",
+      },
+    });
+    expect(verifierMessage.response.status === 201, "Verifier should send correction messages to employees");
+
     const reply = await request(`/notifications/${received.id}/reply`, {
       method: "POST",
       token: sessions.employee.token,
@@ -721,7 +775,7 @@ try {
     });
     expect(broadcast.response.status === 201, "Super admin broadcast failed", JSON.stringify(broadcast.payload));
     expect(broadcast.payload.notifications?.length >= 2, "Broadcast should reach multiple users");
-    return "admin/super admin send, employee reply only";
+    return "admin/super admin send, verifier messages employees, employee reply only";
   });
 
   await check("Logout invalidates protected API access", async () => {
