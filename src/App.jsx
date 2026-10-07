@@ -497,7 +497,14 @@ function App() {
               onAddClient={handleAddInvoice}
             />
           ) : view === "analysis" ? (
-            <FinancialDataAnalysis clients={clients} onViewDetails={openDetails} />
+            <FinancialDataAnalysis
+              clients={clients}
+              onViewDetails={openDetails}
+              onBack={() => {
+                setView(homeView);
+                window.scrollTo({ top: 0, behavior: "smooth" });
+              }}
+            />
           ) : view === "super-admin" ? (
             <AdminUsers currentUser={user} />
           ) : view === "activity" ? (

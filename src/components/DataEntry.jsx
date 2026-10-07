@@ -38,6 +38,15 @@ const bankOptions = [
   { name: "Digital Kidu", logo: DigitalKiduLogo },
 ];
 
+const currencyOptions = [
+  { value: "BTN", label: "BTN - Bhutanese Ngultrum" },
+  { value: "USD", label: "USD - US Dollar" },
+  { value: "NZD", label: "NZD - New Zealand Dollar" },
+  { value: "INR", label: "INR - Indian Rupee" },
+  { value: "AUD", label: "AUD - Australian Dollar" },
+  { value: "EUR", label: "EUR - Euro" },
+];
+
 const draftStorageKey = "counttale_invoice_drafts";
 const countryNameFormatter = typeof Intl !== "undefined" ? new Intl.DisplayNames(["en"], { type: "region" }) : null;
 const flagForCountry = (countryCode) =>
@@ -162,8 +171,8 @@ const InputGroup = ({ label, description, children, className }) => (
 );
 
 const FormInput = ({ value, onChange, onFocus, onBlur, placeholder, prefix, suffix }) => (
-  <div className="relative group">
-    {prefix && <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm font-medium z-10">{prefix}</span>}
+  <div className={cn("relative group", prefix && "form-input-has-prefix")}>
+    {prefix && <span className="form-input-prefix">{prefix}</span>}
     <input 
       type="text" 
       value={value}
@@ -173,7 +182,7 @@ const FormInput = ({ value, onChange, onFocus, onBlur, placeholder, prefix, suff
       placeholder={placeholder} 
       className={cn(
         "premium-input w-full rounded-2xl py-3 px-4 text-sm text-slate-900 placeholder:text-slate-400 outline-none transition-all duration-300 hover:border-slate-300",
-        prefix && "pl-9",
+        prefix && "form-input-prefixed",
         suffix && "pr-9"
       )}
     />
@@ -183,6 +192,10 @@ const FormInput = ({ value, onChange, onFocus, onBlur, placeholder, prefix, suff
 
 const FormSelect = ({ value, onChange, onFocus, onBlur, placeholder, options = [] }) => {
   const [isOpen, setIsOpen] = useState(false);
+  const normalizedOptions = options.map((option) =>
+    typeof option === "object" ? option : { value: option, label: option },
+  );
+  const selectedOption = normalizedOptions.find((option) => option.value === value);
   const closeSelect = () => {
     setIsOpen(false);
     onBlur?.();
@@ -207,7 +220,7 @@ const FormSelect = ({ value, onChange, onFocus, onBlur, placeholder, options = [
           value === "" ? "text-slate-400 font-medium" : "text-slate-900 font-black"
         )}
       >
-        <span className="truncate pr-4">{value || placeholder}</span>
+        <span className="truncate pr-4">{selectedOption?.label || value || placeholder}</span>
         <ChevronDown 
           className={cn("text-slate-400 group-hover:text-slate-900 transition-transform duration-300 flex-shrink-0", isOpen && "rotate-180")} 
           size={16} 
@@ -219,24 +232,24 @@ const FormSelect = ({ value, onChange, onFocus, onBlur, placeholder, options = [
           <div className="fixed inset-0 z-[200]" onClick={closeSelect} />
           <div className="premium-popover absolute top-full left-0 right-0 mt-2 rounded-2xl overflow-hidden z-[220]">
             <div className="max-h-64 overflow-y-auto p-1.5 custom-scrollbar">
-              {options.length === 0 ? (
+              {normalizedOptions.length === 0 ? (
                 <div className="px-4 py-3 text-xs text-slate-400 text-center font-bold italic">No options available</div>
               ) : (
-                options.map((opt, i) => (
+                normalizedOptions.map((option) => (
                   <button
-                    key={i}
+                    key={option.value}
                     type="button"
                     onClick={() => {
-                      onChange({ target: { value: opt } });
+                      onChange({ target: { value: option.value } });
                       closeSelect();
                     }}
                     className={cn(
                       "w-full text-left px-4 py-3 text-sm rounded-xl transition-all flex items-center justify-between group/item",
-                      value === opt ? "bg-slate-950 text-white font-black shadow-sm" : "text-slate-600 hover:bg-blue-50 hover:text-slate-950 font-bold"
+                      value === option.value ? "bg-slate-950 text-white font-black shadow-sm" : "text-slate-600 hover:bg-blue-50 hover:text-slate-950 font-bold"
                     )}
                   >
-                    <span className="truncate">{opt}</span>
-                    {value === opt && <Check size={14} className="text-white" />}
+                    <span className="truncate">{option.label}</span>
+                    {value === option.value && <Check size={14} className="text-white" />}
                   </button>
                 ))
               )}
@@ -247,6 +260,35 @@ const FormSelect = ({ value, onChange, onFocus, onBlur, placeholder, options = [
     </div>
   );
 };
+
+const CurrencySelector = ({ value, onChange, onFocus, onBlur }) => (
+  <div className="currency-selector" role="radiogroup" aria-label="Invoice currency">
+    <div className="currency-selector-grid">
+      {currencyOptions.map((option) => {
+        const selected = value === option.value;
+        return (
+          <button
+            key={option.value}
+            type="button"
+            role="radio"
+            aria-checked={selected}
+            title={option.label}
+            onClick={() => onChange({ target: { value: option.value } })}
+            onFocus={onFocus}
+            onBlur={onBlur}
+            className={cn("currency-selector-option", selected && "is-selected")}
+          >
+            <span>{option.value}</span>
+            {selected && <Check size={13} aria-hidden="true" />}
+          </button>
+        );
+      })}
+    </div>
+    <p className="currency-selector-current">
+      Selected: {currencyOptions.find((option) => option.value === value)?.label || value}
+    </p>
+  </div>
+);
 
 const FormTextarea = ({ value, onChange, onFocus, onBlur, placeholder, rows = 3 }) => (
   <textarea 
@@ -1507,7 +1549,7 @@ export function DataEntry({ onBack, onAddClient, clients = [], draftToLoad = nul
                   <FormInput value={formData.invoiceAmount} onChange={(e) => handleInputChange("invoiceAmount", e.target.value)} onFocus={() => handleFocus("costs")} onBlur={handleBlur} placeholder="0.00" prefix={currencyPrefix} />
                 </InputGroup>
                 <InputGroup label="Currency" description="Invoice currency">
-                  <FormSelect value={formData.currency} onChange={(e) => handleInputChange("currency", e.target.value)} onFocus={() => handleFocus("costs")} onBlur={handleBlur} placeholder="Select currency..." options={["BTN"]} />
+                  <CurrencySelector value={formData.currency} onChange={(e) => handleInputChange("currency", e.target.value)} onFocus={() => handleFocus("costs")} onBlur={handleBlur} />
                 </InputGroup>
                 <InputGroup label="Financial Institution" description="Choose the bank/logo for this invoice" className="sm:col-span-2">
                   <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-5">

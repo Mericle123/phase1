@@ -163,15 +163,6 @@ export function Sidebar({ view = "directory", setView, isOpen, isCollapsed = fal
         </div>
         <button
           type="button"
-          onClick={toggleCollapsed}
-          aria-label={isCollapsed ? "Expand navigation menu" : "Collapse navigation menu"}
-          title={isCollapsed ? "Expand navigation" : "Collapse navigation"}
-          className="hidden lg:flex h-9 w-9 min-h-9 min-w-9 items-center justify-center rounded-lg border border-white/10 bg-white/10 text-white/70 shadow-sm hover:bg-white/15 hover:text-white active:scale-95"
-        >
-          {isCollapsed ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}
-        </button>
-        <button
-          type="button"
           onClick={closeSidebar}
           aria-label="Close navigation menu"
           className="lg:hidden rounded-lg border border-white/10 bg-white/10 p-2 text-white/70 shadow-sm hover:bg-white/15 hover:text-white active:scale-95"
@@ -180,6 +171,16 @@ export function Sidebar({ view = "directory", setView, isOpen, isCollapsed = fal
         </button>
         <BrandRail className="sidebar-brand-rail" />
       </div>
+
+      <button
+        type="button"
+        onClick={toggleCollapsed}
+        aria-label={isCollapsed ? "Expand navigation menu" : "Collapse navigation menu"}
+        title={isCollapsed ? "Expand navigation" : "Collapse navigation"}
+        className="sidebar-collapse-control hidden lg:flex"
+      >
+        {isCollapsed ? <PanelLeftOpen size={17} /> : <PanelLeftClose size={17} />}
+      </button>
 
       <nav className={cn("flex-1 space-y-1 overflow-y-auto", isCollapsed ? "px-2" : "px-3")}>
         <div className={cn("px-4 mb-2 text-[10px] font-black text-white/35 uppercase tracking-widest", isCollapsed && "lg:sr-only")}>

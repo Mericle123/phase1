@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Bell, CheckCheck, MessageSquareReply, Search, Send, X } from "lucide-react";
+import { Bell, CheckCheck, Inbox, MailPlus, MessageSquareReply, Search, Send, Users, X } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "../lib/utils";
 import { api } from "../services/api";
@@ -43,6 +43,7 @@ export function NotificationCenter({ user }) {
   const [recipientSearch, setRecipientSearch] = useState("");
   const [replyDrafts, setReplyDrafts] = useState({});
   const [isSending, setIsSending] = useState(false);
+  const [activeView, setActiveView] = useState("inbox");
   const hasLoadedOnce = useRef(false);
   const previousUnreadCount = useRef(0);
 
@@ -94,6 +95,20 @@ export function NotificationCenter({ user }) {
     };
   }, [loadNotifications, loadRecipients]);
 
+  useEffect(() => {
+    if (!isOpen) return undefined;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const closeOnEscape = (event) => {
+      if (event.key === "Escape") setIsOpen(false);
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [isOpen]);
+
   const markRead = async (notification) => {
     if (!notification.unread) return;
     try {
@@ -111,6 +126,7 @@ export function NotificationCenter({ user }) {
       const payload = await api.sendNotification(messageForm);
       setNotifications((current) => [...(payload.notifications || []), ...current]);
       setMessageForm((current) => ({ ...current, title: "", message: "" }));
+      setActiveView("inbox");
       toast.success("Notification sent");
     } catch (error) {
       toast.error("Message failed", { description: error.message });
@@ -145,134 +161,156 @@ export function NotificationCenter({ user }) {
   const selectedRecipient = recipientOptions.find((item) => item.id === messageForm.target);
 
   const panel = isOpen ? createPortal(
-    <>
-      <div className="notification-backdrop fixed inset-0 z-[230] bg-slate-950/20" onClick={() => setIsOpen(false)} />
-      <aside className="notification-panel fixed right-0 top-0 z-[240] flex h-full w-[min(29rem,100vw)] flex-col border-l border-white/80 shadow-2xl shadow-slate-400/30 backdrop-blur-2xl motion-drawer">
-        <div className="border-b border-slate-100 px-5 py-5">
-          <div className="flex items-start justify-between gap-4">
+    <div className="message-center-backdrop" role="presentation" onClick={() => setIsOpen(false)}>
+      <section
+        className="message-center-dialog motion-pop"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="message-center-title"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <header className="message-center-header">
+          <div className="message-center-title-group">
+            <span className="message-center-mark"><Bell size={20} /></span>
             <div>
-              <p className="text-[10px] font-black uppercase tracking-widest text-[var(--ds-navy)]">Message Center</p>
-              <h2 className="mt-1 text-xl font-black text-slate-950">Notifications</h2>
-              <p className="mt-1 text-xs font-medium text-slate-500">{unreadCount} unread message{unreadCount === 1 ? "" : "s"}</p>
+              <p>Communication Center</p>
+              <h2 id="message-center-title">Messages & Notifications</h2>
+              <span>{unreadCount} unread message{unreadCount === 1 ? "" : "s"}</span>
             </div>
-            <button type="button" onClick={() => setIsOpen(false)} className="ui-icon-btn" aria-label="Close notifications">
-              <X size={16} />
-            </button>
           </div>
-        </div>
+          <button type="button" onClick={() => setIsOpen(false)} className="ui-icon-btn" aria-label="Close notifications">
+            <X size={18} />
+          </button>
+        </header>
 
-        <div className="flex-1 overflow-y-auto p-5 custom-scrollbar">
+        <nav className="message-center-tabs" aria-label="Message center views">
+          <button type="button" className={activeView === "inbox" ? "is-active" : ""} onClick={() => setActiveView("inbox")}>
+            <Inbox size={16} />
+            Inbox
+            {unreadCount > 0 && <span>{unreadCount}</span>}
+          </button>
           {canCompose(user) && (
-            <form onSubmit={sendMessage} className="mb-5 rounded-[1.35rem] border border-emerald-100 bg-emerald-50/70 p-4">
-              <div className="flex items-center gap-2 text-[var(--ds-navy)]">
-                <Send size={15} />
-                <p className="text-xs font-black uppercase tracking-widest">Send Notification</p>
-              </div>
-              <div className="mt-4 grid grid-cols-1 gap-3">
-                <div className="rounded-2xl border border-emerald-100 bg-white/70 p-3">
-                  <div className="relative">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={15} />
-                    <input
-                      value={recipientSearch}
-                      onChange={(event) => setRecipientSearch(event.target.value)}
-                      className="premium-input w-full rounded-2xl py-2.5 pl-9 pr-3 text-xs font-bold text-slate-900 outline-none"
-                      placeholder="Search employee, admin, or group..."
-                    />
+            <button type="button" className={activeView === "compose" ? "is-active" : ""} onClick={() => setActiveView("compose")}>
+              <MailPlus size={16} />
+              New Message
+            </button>
+          )}
+        </nav>
+
+        <div className="message-center-body custom-scrollbar">
+          {activeView === "compose" && canCompose(user) ? (
+            <form onSubmit={sendMessage} className="message-compose-layout">
+              <aside className="message-recipient-pane">
+                <div className="message-section-heading">
+                  <Users size={17} />
+                  <div>
+                    <h3>Recipients</h3>
+                    <p>Choose a person or permitted group</p>
                   </div>
-                  <div className="mt-3 max-h-44 overflow-y-auto pr-1 custom-scrollbar">
-                    <div className="grid grid-cols-1 gap-2">
-                      {filteredRecipientOptions.map((item) => {
-                        const selected = messageForm.target === item.id;
-                        return (
-                          <button
-                            key={`${item.type}-${item.id}`}
-                            type="button"
-                            onClick={() => setMessageForm((current) => ({ ...current, target: item.id }))}
-                            className={cn(
-                              "flex items-center justify-between gap-3 rounded-xl border px-3 py-2.5 text-left transition-all",
-                              selected ? "notification-recipient-selected text-[var(--ds-navy)]" : "border-slate-100 bg-white text-slate-600 hover:border-slate-200 hover:bg-slate-50",
-                            )}
-                          >
-                            <span className="min-w-0">
-                              <span className="block truncate text-xs font-black">{item.label}</span>
-                              <span className="mt-0.5 block text-[10px] font-black uppercase tracking-widest opacity-60">{item.type}</span>
-                            </span>
-                            {selected && <CheckCheck size={14} />}
-                          </button>
-                        );
-                      })}
-                      {!filteredRecipientOptions.length && (
-                        <div className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-4 text-center text-xs font-bold text-slate-500">
-                          No matching recipients.
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                  <p className="mt-3 text-[10px] font-black uppercase tracking-widest text-slate-400">
-                    Sending to: <span className="text-slate-700">{selectedRecipient?.label || "Choose recipient"}</span>
-                  </p>
                 </div>
-                <input
-                  value={messageForm.title}
-                  onChange={(event) => setMessageForm((current) => ({ ...current, title: event.target.value }))}
-                  className="premium-input rounded-2xl px-3 py-3 text-xs font-bold text-slate-900 outline-none"
-                  placeholder="Subject"
-                />
-                <textarea
-                  value={messageForm.message}
-                  onChange={(event) => setMessageForm((current) => ({ ...current, message: event.target.value }))}
-                  className="premium-input min-h-24 rounded-2xl px-3 py-3 text-sm font-medium text-slate-900 outline-none resize-none"
-                  placeholder="Write the correction, reminder, or instruction..."
-                  required
-                />
-                <button type="submit" disabled={isSending || !messageForm.target} className="ui-btn ui-btn-md ui-btn-primary justify-center disabled:cursor-not-allowed disabled:opacity-50">
-                  <Send size={16} />
-                  {isSending ? <TaskLoader type="message" compact className="notification-inline-loader" /> : "Send Message"}
-                </button>
+                <label className="message-recipient-search">
+                  <Search size={15} aria-hidden="true" />
+                  <span className="sr-only">Search recipients</span>
+                  <input
+                    value={recipientSearch}
+                    onChange={(event) => setRecipientSearch(event.target.value)}
+                    placeholder="Search recipients"
+                  />
+                </label>
+                <div className="message-recipient-list custom-scrollbar">
+                  {filteredRecipientOptions.map((item) => {
+                    const selected = messageForm.target === item.id;
+                    return (
+                      <button
+                        key={`${item.type}-${item.id}`}
+                        type="button"
+                        onClick={() => setMessageForm((current) => ({ ...current, target: item.id }))}
+                        className={cn("message-recipient-option", selected && "is-selected")}
+                      >
+                        <span>
+                          <strong>{item.label}</strong>
+                          <small>{item.type}</small>
+                        </span>
+                        {selected && <CheckCheck size={16} />}
+                      </button>
+                    );
+                  })}
+                  {!filteredRecipientOptions.length && <p className="message-empty-recipient">No matching recipients.</p>}
+                </div>
+              </aside>
+
+              <div className="message-editor-pane">
+                <div className="message-section-heading">
+                  <Send size={17} />
+                  <div>
+                    <h3>Compose Message</h3>
+                    <p>To {selectedRecipient?.label || "select a recipient"}</p>
+                  </div>
+                </div>
+                <label className="message-editor-field">
+                  <span>Subject</span>
+                  <input
+                    value={messageForm.title}
+                    onChange={(event) => setMessageForm((current) => ({ ...current, title: event.target.value }))}
+                    placeholder="What is this message about?"
+                    required
+                  />
+                </label>
+                <label className="message-editor-field message-editor-grow">
+                  <span>Message</span>
+                  <textarea
+                    value={messageForm.message}
+                    onChange={(event) => setMessageForm((current) => ({ ...current, message: event.target.value }))}
+                    placeholder="Write a clear correction, reminder, or instruction..."
+                    maxLength={1200}
+                    required
+                  />
+                  <small>{messageForm.message.length}/1200</small>
+                </label>
+                <div className="message-editor-actions">
+                  <button type="button" onClick={() => setActiveView("inbox")} className="ui-btn ui-btn-md ui-btn-secondary">Cancel</button>
+                  <button type="submit" disabled={isSending || !messageForm.target} className="ui-btn ui-btn-md ui-btn-primary">
+                    {isSending ? <TaskLoader type="message" compact className="notification-inline-loader" /> : <><Send size={16} />Send Message</>}
+                  </button>
+                </div>
               </div>
             </form>
-          )}
-
-          <div className="space-y-3">
+          ) : (
+            <div className="message-inbox-list">
             {notifications.map((notification) => (
               <article
                 key={notification.id}
                 className={cn(
-                  "notification-item rounded-[1.35rem] border p-4 transition-all",
-                  notification.unread ? "border-rose-100 bg-rose-50/80" : "border-slate-100 bg-white/75",
+                  "message-inbox-item",
+                  notification.unread && "is-unread",
                 )}
               >
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2">
-                      {notification.unread && <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-rose-600 shadow-[0_0_0_4px_rgba(225,38,27,0.12)]" />}
-                      <p className="truncate text-sm font-black text-slate-950">{notification.title}</p>
-                    </div>
-                    <p className="mt-1 text-[10px] font-black uppercase tracking-widest text-slate-400">
-                      {notification.direction === "sent" ? `To ${notification.recipientName}` : `From ${notification.senderName}`} / {formatTime(notification.createdAt)}
-                    </p>
+                <div className="message-inbox-topline">
+                  <div>
+                    <span className="message-direction">{notification.direction === "sent" ? "Sent" : "Received"}</span>
+                    <h3>{notification.title}</h3>
+                    <p>{notification.direction === "sent" ? `To ${notification.recipientName}` : `From ${notification.senderName}`} · {formatTime(notification.createdAt)}</p>
                   </div>
                   {notification.unread && (
-                    <button type="button" onClick={() => markRead(notification)} className="ui-icon-btn text-emerald-700" aria-label="Mark notification read">
+                    <button type="button" onClick={() => markRead(notification)} className="ui-icon-btn" aria-label="Mark notification read" title="Mark as read">
                       <CheckCheck size={15} />
                     </button>
                   )}
                 </div>
-                <p className="mt-3 whitespace-pre-wrap text-sm font-medium leading-6 text-slate-700">{notification.message}</p>
+                <p className="message-inbox-copy">{notification.message}</p>
                 {notification.direction === "received" && (
-                  <div className="mt-4 rounded-2xl border border-slate-100 bg-white/70 p-3">
-                    <div className="mb-2 flex items-center gap-2 text-slate-500">
+                  <div className="message-reply-box">
+                    <div className="message-reply-label">
                       <MessageSquareReply size={14} />
-                      <p className="text-[10px] font-black uppercase tracking-widest">Reply</p>
+                      <span>Reply</span>
                     </div>
                     <textarea
                       value={replyDrafts[notification.id] || ""}
                       onChange={(event) => setReplyDrafts((current) => ({ ...current, [notification.id]: event.target.value }))}
-                      className="premium-input min-h-20 w-full rounded-2xl px-3 py-2 text-sm outline-none resize-none"
                       placeholder="Reply to sender..."
                       onFocus={() => markRead(notification)}
                     />
-                    <button type="button" onClick={() => sendReply(notification)} className="ui-btn ui-btn-sm ui-btn-secondary mt-2 w-full justify-center">
+                    <button type="button" onClick={() => sendReply(notification)} className="ui-btn ui-btn-sm ui-btn-secondary">
                       Send Reply
                     </button>
                   </div>
@@ -280,14 +318,17 @@ export function NotificationCenter({ user }) {
               </article>
             ))}
             {notifications.length === 0 && (
-              <div className="rounded-[1.35rem] border border-slate-100 bg-slate-50 p-8 text-center text-sm font-bold text-slate-500">
-                No notifications yet.
+              <div className="message-inbox-empty">
+                <Inbox size={28} />
+                <h3>Your inbox is clear</h3>
+                <p>New messages and important account notifications will appear here.</p>
               </div>
             )}
           </div>
+          )}
         </div>
-      </aside>
-    </>,
+      </section>
+    </div>,
     document.body,
   ) : null;
 

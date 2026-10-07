@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, useRef } from "react";
 import { createPortal } from "react-dom";
 import { AlertTriangle, ArrowRight, CheckCircle2, ChevronLeft, ChevronRight, CircleDollarSign, CircleOff, Eye, Download, BarChart2, PieChart, ReceiptText, X, Search, ShieldCheck, SlidersHorizontal, Edit3, Save, MessageSquare, Send } from "lucide-react";
 import { cn } from "../lib/utils";
@@ -54,6 +54,9 @@ export function ClientTable({ clients, setClients, onViewDetails, onViewReport, 
   const [editForm, setEditForm] = useState({});
   const [messageClient, setMessageClient] = useState(null);
   const [messageForm, setMessageForm] = useState({ title: "Correction required", message: "" });
+  const [isSendingEntryMessage, setIsSendingEntryMessage] = useState(false);
+  const isSendingEntryMessageRef = useRef(false);
+  const entryMessageRef = useRef(null);
   const [paymentForm, setPaymentForm] = useState({
     paymentSender: "",
     paymentMethod: "Bank Transfer",
@@ -113,6 +116,21 @@ export function ClientTable({ clients, setClients, onViewDetails, onViewReport, 
       document.getElementById("record-edit-first-field")?.focus({ preventScroll: true });
     });
   }, [editClient]);
+
+  useEffect(() => {
+    if (!messageClient) return undefined;
+    const previousFocus = document.activeElement;
+    const focusTimer = window.setTimeout(() => entryMessageRef.current?.focus({ preventScroll: true }), 0);
+    const closeOnEscape = (event) => {
+      if (event.key === "Escape" && !isSendingEntryMessageRef.current) setMessageClient(null);
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => {
+      window.clearTimeout(focusTimer);
+      window.removeEventListener("keydown", closeOnEscape);
+      if (previousFocus?.isConnected) previousFocus.focus?.({ preventScroll: true });
+    };
+  }, [messageClient]);
 
   const filteredClients = useMemo(() => {
     const query = localSearchQuery.toLowerCase().trim();
@@ -290,17 +308,28 @@ export function ClientTable({ clients, setClients, onViewDetails, onViewReport, 
 
   const sendEntryMessage = async () => {
     if (!messageClient) return;
+    const title = String(messageForm.title || "").trim();
+    const message = String(messageForm.message || "").trim();
+    if (!title || !message) {
+      toast.error("Message required", { description: "Add a subject and correction message before sending." });
+      return;
+    }
+    isSendingEntryMessageRef.current = true;
+    setIsSendingEntryMessage(true);
     try {
       await api.sendNotification({
         target: messageClient.enteredBy,
-        title: messageForm.title,
-        message: messageForm.message,
+        title,
+        message,
       });
       setMessageClient(null);
       setMessageForm({ title: "Correction required", message: "" });
       toast.success("Message sent", { description: `${getEnteredByName(messageClient)} will see it in notifications.` });
     } catch (error) {
       toast.error("Message failed", { description: error.message });
+    } finally {
+      isSendingEntryMessageRef.current = false;
+      setIsSendingEntryMessage(false);
     }
   };
 
@@ -518,6 +547,7 @@ export function ClientTable({ clients, setClients, onViewDetails, onViewReport, 
                             className="ui-icon-btn h-7 min-h-7 w-7 min-w-7 text-blue-700"
                             title="Message employee"
                             aria-label="Message employee"
+                            data-loading-feedback="off"
                           >
                             <MessageSquare size={13} />
                           </button>
@@ -687,7 +717,13 @@ export function ClientTable({ clients, setClients, onViewDetails, onViewReport, 
                     <div className="mt-1 flex items-center justify-between gap-3">
                       <p className="font-bold text-slate-800">{getEnteredByName(client)}</p>
                       {canMessageEntryOwner(client) && (
-                        <button type="button" onClick={() => openMessageEditor(client)} className="ui-btn ui-btn-sm ui-btn-soft">
+                        <button
+                          type="button"
+                          onClick={() => openMessageEditor(client)}
+                          className="ui-btn ui-btn-sm ui-btn-soft"
+                          aria-label="Message employee"
+                          data-loading-feedback="off"
+                        >
                           <MessageSquare size={14} />
                           Message
                         </button>
@@ -777,62 +813,96 @@ export function ClientTable({ clients, setClients, onViewDetails, onViewReport, 
         </div>
       </div>
 
-      {messageClient && (
-        <div className="ui-modal-backdrop" role="presentation" onClick={() => setMessageClient(null)}>
-          <div
-            className="glass-panel ui-modal-panel max-w-lg motion-pop"
+      {messageClient && createPortal(
+        <div
+          className="entry-message-backdrop"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget && !isSendingEntryMessage) setMessageClient(null);
+          }}
+        >
+          <section
+            className="entry-message-modal motion-pop"
             role="dialog"
             aria-modal="true"
             aria-labelledby="entry-message-title"
-            onClick={(event) => event.stopPropagation()}
+            aria-describedby="entry-message-context"
+            onMouseDown={(event) => event.stopPropagation()}
           >
-            <div className="ui-modal-header border-b border-slate-200/70 p-5 sm:p-6">
-              <div className="flex items-start justify-between gap-4">
+            <header className="entry-message-header">
+              <div className="entry-message-heading">
+                <span className="entry-message-icon" aria-hidden="true"><MessageSquare size={19} /></span>
                 <div>
-                  <p className="text-[10px] font-black uppercase tracking-widest text-blue-700">Message Employee</p>
-                  <h3 id="entry-message-title" className="mt-2 text-xl font-black text-slate-950">{getEnteredByName(messageClient)}</h3>
-                  <p className="mt-1 text-sm font-medium text-slate-500">
-                    About {messageClient.name} / {messageClient.journalNo || "No journal"}
-                  </p>
+                  <p className="entry-message-eyebrow">Correction message</p>
+                  <h2 id="entry-message-title">Message {getEnteredByName(messageClient)}</h2>
+                  <p id="entry-message-context">{messageClient.name} <span aria-hidden="true">/</span> Journal {messageClient.journalNo || "not recorded"}</p>
                 </div>
-                <button type="button" onClick={() => setMessageClient(null)} className="ui-icon-btn" aria-label="Close message composer">
-                  <X size={16} />
-                </button>
               </div>
-            </div>
-            <div className="ui-modal-body custom-scrollbar p-5 sm:p-6">
-              <label className="block">
-                <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Subject</span>
-                <input
-                  value={messageForm.title}
-                  onChange={(event) => setMessageForm((current) => ({ ...current, title: event.target.value }))}
-                  className="premium-input mt-2 w-full rounded-2xl px-4 py-3 text-sm font-bold text-slate-900 outline-none"
-                />
-              </label>
-              <label className="mt-4 block">
-                <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Correction Message</span>
-                <textarea
-                  rows={5}
-                  value={messageForm.message}
-                  onChange={(event) => setMessageForm((current) => ({ ...current, message: event.target.value }))}
-                  placeholder="Explain the mistake and what needs to be changed..."
-                  className="premium-input mt-2 w-full resize-none rounded-2xl px-4 py-3 text-sm text-slate-900 outline-none"
-                />
-              </label>
-            </div>
-            <div className="ui-modal-footer border-t border-slate-200/70 bg-white/70 p-4 sm:p-5">
-              <div className="flex flex-col gap-3 sm:flex-row">
-                <button type="button" onClick={() => setMessageClient(null)} className="ui-btn ui-btn-md ui-btn-secondary flex-1">
+              <button
+                type="button"
+                onClick={() => !isSendingEntryMessage && setMessageClient(null)}
+                className="ui-icon-btn"
+                aria-label="Close message composer"
+                disabled={isSendingEntryMessage}
+              >
+                <X size={17} />
+              </button>
+            </header>
+
+            <form className="entry-message-form" onSubmit={(event) => { event.preventDefault(); void sendEntryMessage(); }}>
+              <div className="entry-message-body custom-scrollbar">
+                <div className="entry-message-recipient">
+                  <span>To</span>
+                  <strong>{getEnteredByName(messageClient)}</strong>
+                  <span className="entry-message-role">{getEnteredByRole(messageClient)}</span>
+                </div>
+                <label className="entry-message-field">
+                  <span>Subject</span>
+                  <input
+                    value={messageForm.title}
+                    onChange={(event) => setMessageForm((current) => ({ ...current, title: event.target.value }))}
+                    placeholder="Correction required"
+                    maxLength={120}
+                    required
+                  />
+                </label>
+                <label className="entry-message-field entry-message-field-grow">
+                  <span>Correction message</span>
+                  <textarea
+                    ref={entryMessageRef}
+                    rows={6}
+                    value={messageForm.message}
+                    onChange={(event) => setMessageForm((current) => ({ ...current, message: event.target.value }))}
+                    placeholder="Explain what needs to be corrected..."
+                    maxLength={1200}
+                    required
+                  />
+                  <small>{messageForm.message.length}/1200</small>
+                </label>
+              </div>
+
+              <footer className="entry-message-footer">
+                <button
+                  type="button"
+                  onClick={() => !isSendingEntryMessage && setMessageClient(null)}
+                  className="ui-btn ui-btn-md ui-btn-secondary"
+                  disabled={isSendingEntryMessage}
+                >
                   Cancel
                 </button>
-                <button type="button" onClick={sendEntryMessage} className="ui-btn ui-btn-md ui-btn-primary flex-1">
-                  <Send size={17} />
-                  Send Message
+                <button
+                  type="submit"
+                  className="ui-btn ui-btn-md ui-btn-primary"
+                  disabled={isSendingEntryMessage || !messageForm.title.trim() || !messageForm.message.trim()}
+                >
+                  <Send size={16} />
+                  {isSendingEntryMessage ? "Sending..." : "Send Message"}
                 </button>
-              </div>
-            </div>
-          </div>
-        </div>
+              </footer>
+            </form>
+          </section>
+        </div>,
+        document.body,
       )}
 
       {editClient && (

@@ -337,7 +337,7 @@ export function Header({ view = "directory", viewTitle = "Comprehensive Client R
           <img className="brand-logo-light" src={NZBritanniaMark} alt="NZ Britannia" />
           <img className="brand-logo-dark" src={NZBritanniaMarkWhite} alt="" aria-hidden="true" />
         </span>
-        <h2 className="ct-topbar-title text-xs md:text-sm font-black text-slate-900 tracking-wide uppercase truncate max-w-[140px] md:max-w-none">
+        <h2 className="ct-topbar-title text-xs md:text-sm font-black text-slate-900 tracking-wide uppercase truncate max-w-[116px] sm:max-w-[150px] md:max-w-none">
           {view === "directory" ? "Client Records" : viewTitle}
         </h2>
       </div>

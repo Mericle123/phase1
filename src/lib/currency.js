@@ -5,6 +5,7 @@ const currencyLabels = {
   EUR: "EUR",
   KWD: "KWD",
   USD: "USD",
+  AUD: "AUD",
 };
 
 export const normalizeCurrencyCode = (code = "BTN") => String(code || "BTN").trim().toUpperCase();

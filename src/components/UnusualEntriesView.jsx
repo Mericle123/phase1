@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -14,12 +15,26 @@ import { toast } from "sonner";
 import { api } from "../services/api";
 import { cn } from "../lib/utils";
 import { downloadFormattedExcel, objectsToRows } from "../lib/exportCsv";
+import { TaskLoader } from "./TaskLoader";
 
 const issueClass = {
   "Late Entry": "bg-amber-50 text-amber-700 border-amber-100",
   "Outside Office Entry": "bg-orange-50 text-orange-700 border-orange-100",
   "Duplicate Journal Attempt": "bg-rose-50 text-rose-700 border-rose-100",
-  "Multiple Failed Attempts": "bg-rose-50 text-rose-700 border-rose-100",
+  "Duplicate Invoice Attempt": "bg-rose-50 text-rose-700 border-rose-100",
+  "Duplicate Payment Journal Attempt": "bg-rose-50 text-rose-700 border-rose-100",
+  "Potential Duplicate Invoice": "bg-amber-50 text-amber-700 border-amber-100",
+  "Repeated Payment Reference": "bg-rose-50 text-rose-700 border-rose-100",
+  "Payment Exceeds Invoice Total": "bg-rose-50 text-rose-700 border-rose-100",
+  "Payment Ledger Mismatch": "bg-rose-50 text-rose-700 border-rose-100",
+  "Payment Status Inconsistent": "bg-amber-50 text-amber-700 border-amber-100",
+  "Invoice Data Validation Warning": "bg-amber-50 text-amber-700 border-amber-100",
+  "Invoice Validation Failure": "bg-rose-50 text-rose-700 border-rose-100",
+  "Generic Invoice Description": "bg-amber-50 text-amber-700 border-amber-100",
+  "Line Item Description Needs Review": "bg-amber-50 text-amber-700 border-amber-100",
+  "Line Item Calculation Mismatch": "bg-rose-50 text-rose-700 border-rose-100",
+  "Invoice Amount Outside Historical Pattern": "bg-amber-50 text-amber-700 border-amber-100",
+  "Device or Session Change": "bg-rose-50 text-rose-700 border-rose-100",
   "Inactive User Activity": "bg-slate-100 text-slate-600 border-slate-200",
   "Edited After Payment Confirmation": "bg-amber-50 text-amber-700 border-amber-100",
   "Unusual Update After Verification": "bg-indigo-50 text-indigo-700 border-indigo-100",
@@ -56,6 +71,8 @@ export function UnusualEntriesView() {
   const [details, setDetails] = useState(null);
   const [messageEntry, setMessageEntry] = useState(null);
   const [message, setMessage] = useState("");
+  const [isSendingMessage, setIsSendingMessage] = useState(false);
+  const messageInputRef = useRef(null);
 
   const loadEntries = async (showSpinner = true) => {
     if (showSpinner) setIsLoading(true);
@@ -92,6 +109,7 @@ export function UnusualEntriesView() {
         entry.roleLabel,
         entry.department,
         entry.recordId,
+        entry.journalNo,
         entry.actionPerformed,
         entry.activityType,
         entry.officeStatus,
@@ -140,15 +158,40 @@ export function UnusualEntriesView() {
   const openMessage = (entry) => {
     setMessageEntry(entry);
     setMessage(
-      `Please review record ${entry.recordId || entry.actionPerformed}. Issue detected: ${getIssueType(entry)}. ${entry.unusualReason || ""}`.trim(),
+      `Please review record ${entry.journalNo || entry.recordId || entry.actionPerformed}. Issue detected: ${getIssueType(entry)}. ${entry.unusualReason || ""}`.trim(),
     );
   };
+
+  const closeMessage = useCallback(() => {
+    if (isSendingMessage) return;
+    setMessageEntry(null);
+    setMessage("");
+  }, [isSendingMessage]);
+
+  useEffect(() => {
+    if (!messageEntry) return undefined;
+    const focusTimer = window.setTimeout(() => messageInputRef.current?.focus(), 80);
+    const closeOnEscape = (event) => {
+      if (event.key === "Escape") closeMessage();
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => {
+      window.clearTimeout(focusTimer);
+      window.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [closeMessage, messageEntry]);
 
   const sendMessage = async () => {
     if (!messageEntry?.employeeId) {
       toast.error("Employee unavailable", { description: "This entry is missing the employee account reference." });
       return;
     }
+    if (!message.trim()) {
+      toast.error("Message required", { description: "Write a short correction note before sending." });
+      messageInputRef.current?.focus();
+      return;
+    }
+    setIsSendingMessage(true);
     try {
       await api.sendNotification({
         target: messageEntry.employeeId,
@@ -160,6 +203,8 @@ export function UnusualEntriesView() {
       setMessage("");
     } catch (error) {
       toast.error("Message failed", { description: error.message });
+    } finally {
+      setIsSendingMessage(false);
     }
   };
 
@@ -169,6 +214,7 @@ export function UnusualEntriesView() {
       Role: entry.roleLabel,
       Department: entry.department,
       "Record ID": entry.recordId || "System",
+      "Journal Number": entry.journalNo || "",
       Issue: getIssueType(entry),
       Reason: entry.unusualReason,
       Action: entry.actionPerformed,
@@ -178,7 +224,7 @@ export function UnusualEntriesView() {
     }));
     downloadFormattedExcel(`NZ_Britannia_Unusual_Entries_${new Date().toISOString().slice(0, 10)}.xls`, objectsToRows(rows), {
       title: "Unusual Entry Detection",
-      subtitle: "Formatted exception report with employee, issue reason, activity, office status, and session context.",
+      subtitle: "Review flags only. Verify each item against source records before taking action.",
       sheetName: "Unusual Entries",
     });
     toast.success("Unusual entries exported", { description: "Formatted unusual-entry workbook generated." });
@@ -194,7 +240,7 @@ export function UnusualEntriesView() {
           </div>
           <h1 className="mt-4 text-3xl md:text-4xl font-black tracking-tight text-white">Unusual Entries</h1>
           <p className="text-white/64 mt-2 max-w-3xl">
-            Review late, duplicate, outside-office, and corrected-after-payment entries in one clear table.
+            Review rule-based activity and invoice checks. A flag is a prompt to verify the record, not a conclusion of wrongdoing.
           </p>
         </div>
         <div className="flex flex-col sm:flex-row gap-2">
@@ -277,7 +323,7 @@ export function UnusualEntriesView() {
             <div>
               <h2 className="text-lg font-black text-slate-900">Unusual Entry Table</h2>
               <p className="mt-1 text-xs font-medium text-slate-500">
-                This is the dedicated table for sloppy, unusual, duplicate, late, and correction-needed entries.
+                Includes activity signals, saved-invoice checks, and blocked validation attempts. Confirm each item against its source records.
               </p>
             </div>
             <span className="w-fit rounded-full border border-amber-100 bg-amber-50 px-3 py-1 text-[10px] font-black uppercase tracking-widest text-amber-700">
@@ -309,8 +355,8 @@ export function UnusualEntriesView() {
                     </p>
                   </td>
                   <td>
-                    <p className="font-mono text-xs font-black text-slate-800" title={entry.recordId || "System"}>
-                      {compactId(entry.recordId)}
+                    <p className="font-mono text-xs font-black text-slate-800" title={entry.journalNo || entry.recordId || "System"}>
+                      {compactId(entry.journalNo || entry.recordId)}
                     </p>
                     <p className="mt-1 max-w-[16rem] truncate text-[10px] font-bold text-slate-400" title={entry.actionPerformed}>
                       {entry.actionPerformed || entry.activityType || "Activity recorded"}
@@ -367,7 +413,7 @@ export function UnusualEntriesView() {
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
                   <h3 className="truncate text-base font-black text-slate-950">{entry.employeeName || "Unknown Employee"}</h3>
-                  <p className="mt-1 font-mono text-[10px] font-bold text-slate-400">{compactId(entry.recordId)}</p>
+                  <p className="mt-1 font-mono text-[10px] font-bold text-slate-400">{compactId(entry.journalNo || entry.recordId)}</p>
                 </div>
                 <StatusBadge value={getIssueType(entry)} />
               </div>
@@ -388,52 +434,71 @@ export function UnusualEntriesView() {
         </div>
       </section>
 
-      {messageEntry && (
-        <div className="ui-modal-backdrop" role="presentation" onClick={() => setMessageEntry(null)}>
-          <div
-            className="glass-panel ui-modal-panel max-w-lg motion-pop"
+      {messageEntry && createPortal(
+        <div className="ui-modal-backdrop unusual-message-backdrop" role="presentation" onClick={closeMessage}>
+          <section
+            className="ui-modal-panel unusual-message-modal motion-pop"
             role="dialog"
             aria-modal="true"
             aria-labelledby="unusual-message-title"
             onClick={(event) => event.stopPropagation()}
           >
-            <div className="ui-modal-header border-b border-slate-200/70 p-5 sm:p-6">
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <p className="text-[10px] font-black uppercase tracking-widest text-amber-700">Message Employee</p>
-                  <h3 id="unusual-message-title" className="mt-2 text-xl font-black text-slate-950">{messageEntry.employeeName}</h3>
-                  <p className="mt-1 text-sm font-medium text-slate-500">{getIssueType(messageEntry)} / {compactId(messageEntry.recordId)}</p>
+            <header className="ui-modal-header unusual-message-header">
+              <div className="unusual-message-heading">
+                <span className="unusual-message-icon" aria-hidden="true"><MessageSquare size={20} /></span>
+                <div className="min-w-0">
+                  <p className="unusual-message-eyebrow">Correction message</p>
+                  <h3 id="unusual-message-title">Message {messageEntry.employeeName}</h3>
+                  <p>{getIssueType(messageEntry)} <span aria-hidden="true">/</span> {compactId(messageEntry.recordId)}</p>
                 </div>
-                <button type="button" onClick={() => setMessageEntry(null)} className="ui-icon-btn" aria-label="Close message composer">
-                  <X size={16} />
-                </button>
               </div>
-            </div>
-            <div className="ui-modal-body custom-scrollbar p-5 sm:p-6">
+              <button type="button" onClick={closeMessage} className="ui-icon-btn" aria-label="Close message composer" disabled={isSendingMessage}>
+                <X size={17} />
+              </button>
+            </header>
+            <div className="ui-modal-body unusual-message-body custom-scrollbar">
+              <div className="unusual-message-context">
+                <AlertTriangle size={18} aria-hidden="true" />
+                <div>
+                  <strong>Detected issue</strong>
+                  <p>{messageEntry.unusualReason || "This entry was marked for administrator review."}</p>
+                </div>
+              </div>
+              <label className="unusual-message-label" htmlFor="unusual-correction-message">
+                What needs to be corrected?
+              </label>
               <textarea
-                rows={6}
+                ref={messageInputRef}
+                id="unusual-correction-message"
+                rows={7}
                 value={message}
                 onChange={(event) => setMessage(event.target.value)}
-                className="premium-input w-full resize-none rounded-2xl px-4 py-3 text-sm text-slate-900 outline-none"
+                className="premium-input unusual-message-textarea"
                 placeholder="Write what the employee needs to correct..."
+                maxLength={800}
+                disabled={isSendingMessage}
               />
-            </div>
-            <div className="ui-modal-footer border-t border-slate-200/70 bg-white/70 p-4 sm:p-5">
-              <div className="flex flex-col gap-3 sm:flex-row">
-                <button type="button" onClick={() => setMessageEntry(null)} className="ui-btn ui-btn-md ui-btn-secondary flex-1">
-                  Cancel
-                </button>
-                <button type="button" onClick={sendMessage} className="ui-btn ui-btn-md ui-btn-primary flex-1">
-                  <Send size={17} />
-                  Send Message
-                </button>
+              <div className="unusual-message-meta">
+                <span>The employee receives this in their notification centre.</span>
+                <span>{message.length}/800</span>
               </div>
             </div>
-          </div>
-        </div>
+            <footer className="ui-modal-footer unusual-message-footer">
+              <div className="unusual-message-actions">
+                <button type="button" onClick={closeMessage} className="ui-btn ui-btn-md ui-btn-secondary" disabled={isSendingMessage}>
+                  Cancel
+                </button>
+                <button type="button" onClick={sendMessage} className="ui-btn ui-btn-md ui-btn-primary" disabled={isSendingMessage || !message.trim()}>
+                  {isSendingMessage ? <TaskLoader type="message" compact className="button-inline-loader" /> : <><Send size={17} />Send Message</>}
+                </button>
+              </div>
+            </footer>
+          </section>
+        </div>,
+        document.body,
       )}
 
-      {details && (
+      {details && createPortal(
         <div className="ui-modal-backdrop" role="presentation" onClick={() => setDetails(null)}>
           <div
             className="glass-panel ui-modal-panel max-w-4xl motion-pop"
@@ -484,7 +549,8 @@ export function UnusualEntriesView() {
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   );

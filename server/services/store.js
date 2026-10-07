@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import bcrypt from "bcryptjs";
 import { v4 as uuidv4 } from "uuid";
 import { roleLabels, rolePermissions, seedInvoices, seedUsers } from "../data/seed.js";
+import { detectInvoiceAnomalies } from "./anomaly-detection.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const dataFile = path.resolve(__dirname, "../data/app-db.json");
@@ -74,6 +75,9 @@ const actionLabels = {
   NOTIFICATION_REPLIED: "Replied to notification",
   TIMING_EXCEPTION_APPROVED: "Approved timing exception",
   TIMING_EXCEPTION_REMOVED: "Removed timing exception",
+  INVOICE_VALIDATION_FAILED: "Invoice submission failed validation",
+  DUPLICATE_INVOICE_ATTEMPT: "Duplicate invoice submission blocked",
+  DUPLICATE_PAYMENT_JOURNAL_ATTEMPT: "Duplicate payment journal blocked",
 };
 
 const reviewStatuses = ["Pending Review", "Approved", "Rejected", "Verified", "Flagged"];
@@ -1237,6 +1241,12 @@ export const recordEmployeeActivity = async ({ actor, action, entityId = "", sta
   return activity;
 };
 
+const recordInvoiceAttemptIssue = async ({ actor, action, remarks, context }) => {
+  if (!actor?.id) return;
+  await recordEmployeeActivity({ actor, action, status: "Flagged", remarks, context });
+  await persist();
+};
+
 const matchesActivityFilter = (activity, filters = {}) => {
   const q = String(filters.q || "").trim().toLowerCase();
   const date = String(filters.date || "");
@@ -1269,6 +1279,24 @@ const matchesActivityFilter = (activity, filters = {}) => {
 
 const getActivityIssue = (activity) => {
   const hour = new Date(activity.entryTime).getHours();
+  if (activity.action === "INVOICE_VALIDATION_FAILED") {
+    return {
+      type: "Invoice Validation Failure",
+      reason: activity.remarks || "An invoice submission did not pass server-side field validation.",
+    };
+  }
+  if (activity.action === "DUPLICATE_INVOICE_ATTEMPT") {
+    return {
+      type: "Duplicate Invoice Attempt",
+      reason: activity.remarks || "A duplicate invoice journal submission was blocked.",
+    };
+  }
+  if (activity.action === "DUPLICATE_PAYMENT_JOURNAL_ATTEMPT") {
+    return {
+      type: "Duplicate Payment Journal Attempt",
+      reason: activity.remarks || "A payment journal number already used in the ledger was blocked.",
+    };
+  }
   if (activity.action === "BLOCKCHAIN_REVISION_CREATED" || activity.status === "Correction") {
     return {
       type: "Edited After Payment Confirmation",
@@ -1295,7 +1323,7 @@ const getActivityIssue = (activity) => {
   }
   if (["Device Changed", "Session Mismatch"].includes(activity.deviceSessionStatus)) {
     return {
-      type: "Multiple Failed Attempts",
+      type: "Device or Session Change",
       reason: "The device or session signal changed and should be reviewed.",
     };
   }
@@ -1600,9 +1628,42 @@ export const getEmployeeActivityReport = (filters = {}) => {
       return Date.now() - new Date(user.lastSeen).getTime() > inactiveWindowMs;
     });
 
-  const unusualEntries = db.activityLogs
+  const activityIssues = db.activityLogs
     .map(withLiveActivityState)
-    .filter((activity) => activity.issueType !== "Normal")
+    .filter((activity) => activity.issueType !== "Normal");
+  const invoiceActivityById = new Map();
+  for (const activity of db.activityLogs) {
+    if (activity.recordId && !invoiceActivityById.has(activity.recordId)) invoiceActivityById.set(activity.recordId, activity);
+  }
+  const invoiceIssues = detectInvoiceAnomalies(db.invoices).map((issue) => {
+    const invoice = db.invoices.find((item) => item.id === issue.invoiceId);
+    const employee = db.users.find((user) => user.id === (invoice?.enteredBy || invoice?.updatedBy));
+    const activity = invoiceActivityById.get(issue.invoiceId);
+    const entryTime = invoice?.createdAt || invoice?.updatedAt || now();
+    return {
+      id: `invoice-anomaly:${issue.invoiceId}:${issue.issueType}`,
+      employeeId: invoice?.enteredBy || invoice?.updatedBy || "",
+      employeeName: employee?.name || "Unknown Employee",
+      role: employee?.role || "employee",
+      roleLabel: roleLabels[employee?.role] || "Employee",
+      department: getDepartment(employee?.role || "employee"),
+      action: "INVOICE_QUALITY_CHECK",
+      actionPerformed: "Invoice quality check",
+      activityType: "Invoice",
+      recordId: issue.invoiceId,
+      journalNo: invoice?.journalNo || "",
+      entryTime,
+      officeStatus: activity?.officeStatus || "Unknown",
+      deviceSessionStatus: activity?.deviceSessionStatus || "No device signal",
+      activeStatus: employee ? getActiveStatus(employee.id) : "Inactive",
+      lastSeen: employee ? getUserLastSeen(employee.id) || entryTime : entryTime,
+      status: "Flagged for review",
+      remarks: issue.unusualReason,
+      issueType: issue.issueType,
+      unusualReason: issue.unusualReason,
+    };
+  });
+  const unusualEntries = [...activityIssues, ...invoiceIssues]
     .sort((a, b) => new Date(b.entryTime || 0) - new Date(a.entryTime || 0));
 
   return {
@@ -1712,20 +1773,43 @@ const validateInvoicePayload = (payload) => {
   if (payload.citizenship === "Foreigner" && !payload.zipCode) {
     missing.push("zipCode");
   }
-  if (toAmount(payload.invoiceAmount) <= 0) {
+  const rawAmount = typeof payload.invoiceAmount === "number"
+    ? payload.invoiceAmount
+    : Number(String(payload.invoiceAmount || "").replace(/,/g, ""));
+  if (!Number.isFinite(rawAmount) || rawAmount <= 0) {
     missing.push("invoiceAmount");
   }
-  return missing;
+  const invoiceDate = String(payload.invoiceDate || "").slice(0, 10);
+  const parsedDate = new Date(`${invoiceDate}T00:00:00.000Z`);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(invoiceDate) || !Number.isFinite(parsedDate.getTime()) || parsedDate.toISOString().slice(0, 10) !== invoiceDate) {
+    missing.push("invoiceDate");
+  }
+  if (!new Set(["BTN", "USD", "NZD", "INR", "AUD", "EUR", "KWD"]).has(String(payload.currency || "").trim().toUpperCase())) {
+    missing.push("currency");
+  }
+  return [...new Set(missing)];
 };
 
 export const createInvoice = async (payload, actor, context = {}) => {
   const missing = validateInvoicePayload(payload);
   if (missing.length) {
+    await recordInvoiceAttemptIssue({
+      actor,
+      action: "INVOICE_VALIDATION_FAILED",
+      remarks: `Server-side validation failed for: ${missing.join(", ")}. No invoice was saved.`,
+      context,
+    });
     const error = new Error(`Missing or invalid fields: ${missing.join(", ")}`);
     error.status = 400;
     throw error;
   }
   if (journalExists(payload.journalNo)) {
+    await recordInvoiceAttemptIssue({
+      actor,
+      action: "DUPLICATE_INVOICE_ATTEMPT",
+      remarks: "A journal number already in use was submitted. The duplicate invoice was blocked.",
+      context,
+    });
     const error = new Error("Journal number already exists.");
     error.status = 409;
     throw error;
@@ -1740,12 +1824,24 @@ export const createInvoice = async (payload, actor, context = {}) => {
   }));
   const submittedPaymentJournals = paymentHistory.map((entry) => entry.journalNo.toLowerCase()).filter(Boolean);
   if (new Set(submittedPaymentJournals).size !== submittedPaymentJournals.length) {
+    await recordInvoiceAttemptIssue({
+      actor,
+      action: "DUPLICATE_PAYMENT_JOURNAL_ATTEMPT",
+      remarks: "A payment submission reused a journal number within the same invoice. The duplicate payment journal was blocked.",
+      context,
+    });
     throw makeHttpError("Each payment must use a unique journal number.", 409);
   }
   const conflictingPaymentJournal = paymentHistory.find(
     (entry) => entry.journalNo && entry.journalNo.toLowerCase() !== payload.journalNo.trim().toLowerCase() && journalExists(entry.journalNo),
   );
   if (conflictingPaymentJournal) {
+    await recordInvoiceAttemptIssue({
+      actor,
+      action: "DUPLICATE_PAYMENT_JOURNAL_ATTEMPT",
+      remarks: "A payment journal number already used in the ledger was submitted. The duplicate payment journal was blocked.",
+      context,
+    });
     throw makeHttpError(`Payment journal ${conflictingPaymentJournal.journalNo} already exists.`, 409);
   }
   if (!paymentHistory.length && toAmount(payload.amountReceived) > 0) {
@@ -1778,6 +1874,7 @@ export const createInvoice = async (payload, actor, context = {}) => {
     paymentReference: payload.paymentReference || "",
     amountReceived,
     paymentHistory,
+    lineItems: Array.isArray(payload.lineItems || payload.items) ? (payload.lineItems || payload.items) : [],
     paymentDate: payload.paymentDate || "",
     verificationRemarks: payload.verificationRemarks || "",
     verifiedBy: "",
@@ -1900,6 +1997,7 @@ export const updateInvoice = async (id, payload, actor, context = {}) => {
     "invoiceAmount",
     "amountReceived",
     "paymentHistory",
+    "lineItems",
     "financialData",
   ];
 
@@ -1920,6 +2018,10 @@ export const updateInvoice = async (id, payload, actor, context = {}) => {
   if (Object.prototype.hasOwnProperty.call(payload, "paymentHistory")) {
     invoice.paymentHistory = normalizePaymentEntries(payload.paymentHistory);
     invoice.amountReceived = sumPaymentEntries(invoice.paymentHistory);
+  }
+  if (Object.prototype.hasOwnProperty.call(payload, "lineItems") || Object.prototype.hasOwnProperty.call(payload, "items")) {
+    const submittedLineItems = payload.lineItems || payload.items;
+    invoice.lineItems = Array.isArray(submittedLineItems) ? submittedLineItems : [];
   }
   if (Object.prototype.hasOwnProperty.call(payload, "invoiceAmount") || Object.prototype.hasOwnProperty.call(payload, "amountReceived")) {
     invoice.paymentStatus = calculatePaymentStatus(invoice.invoiceAmount, invoice.amountReceived);
